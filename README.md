@@ -169,11 +169,13 @@ keyboard/
 │   ├─ Config.cs              配置读写
 │   ├─ InputSender.cs         按键注入
 │   ├─ ActionRunner.cs        执行动作
-│   └─ Native.cs              Win32 API 声明
+│   ├─ Native.cs              Win32 API 声明
+│   └─ app.ico                应用与托盘图标资源（多分辨率）
 │
-├─ tools/                     诊断工具（排查问题用）
+├─ tools/                     诊断与辅助工具
 │   ├─ KeySpy/                按键抓包分析器
-│   └─ MacroTest/             按键序列回放器（自动化测试）
+│   ├─ MacroTest/             按键序列回放器（自动化测试）
+│   └─ GenerateIcon/          多分辨率应用图标生成器
 │
 ├─ config.ini                 默认配置模板
 ├─ build.ps1                  本地构建脚本

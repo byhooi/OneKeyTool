@@ -41,13 +41,17 @@ $cscArgs = @(
     '/codepage:65001', '/utf8output', '/out:dist\OneKeyTool.exe',
     '/reference:System.dll', '/reference:System.Drawing.dll',
     '/reference:System.Windows.Forms.dll'
-) + $src
+)
+if (Test-Path 'src\app.ico') {
+    $cscArgs += '/win32icon:src\app.ico'
+}
+$cscArgs += $src
 & $csc @cscArgs
 if ($LASTEXITCODE -ne 0) { throw "编译失败（退出码 $LASTEXITCODE）" }
 Write-Host "  OK" -ForegroundColor Green
 
-# ── 4. 编译诊断工具（仅验证） ──
-Write-Host "[2/3] 编译诊断工具..." -ForegroundColor Yellow
+# ── 4. 编译诊断与辅助工具（仅验证） ──
+Write-Host "[2/3] 编译诊断与辅助工具..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path 'dist\_tools' | Out-Null
 & $csc /nologo /platform:x64 /optimize+ /codepage:65001 /utf8output `
     /out:dist\_tools\KeySpy.exe 'tools\KeySpy\KeySpy.cs'
@@ -55,6 +59,9 @@ if ($LASTEXITCODE -ne 0) { throw "KeySpy 编译失败" }
 & $csc /nologo /platform:x64 /optimize+ /codepage:65001 /utf8output `
     /out:dist\_tools\MacroTest.exe 'tools\MacroTest\MacroTest.cs'
 if ($LASTEXITCODE -ne 0) { throw "MacroTest 编译失败" }
+& $csc /nologo /platform:x64 /optimize+ /codepage:65001 /utf8output /r:System.Drawing.dll `
+    /out:dist\_tools\GenerateIcon.exe 'tools\GenerateIcon\GenerateIcon.cs'
+if ($LASTEXITCODE -ne 0) { throw "GenerateIcon 编译失败" }
 Remove-Item 'dist\_tools' -Recurse -Force
 Write-Host "  OK" -ForegroundColor Green
 

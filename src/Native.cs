@@ -118,5 +118,19 @@ namespace OneKeyTool
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+        // ---------- 图标资源 ----------
+        public const uint IMAGE_ICON = 1;
+
+        /// <summary>/win32icon 嵌入的图标组 ID（等同于 IDI_APPLICATION）。</summary>
+        public const int IDI_APP_ICON = 32512;
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern IntPtr LoadImage(IntPtr hinst, IntPtr name, uint type,
+            int cx, int cy, uint fu);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool DestroyIcon(IntPtr hIcon);
     }
 }

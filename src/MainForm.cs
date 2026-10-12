@@ -28,6 +28,8 @@ namespace OneKeyTool
         private System.Windows.Forms.Timer _hintTimer;
         private NotifyIcon _tray;
         private System.Windows.Forms.Timer _pump;
+        private Icon _appIcon;   // 窗口图标（标题栏 / Alt-Tab）
+        private Icon _trayIcon;  // 托盘图标（小尺寸，单独取原生分辨率）
 
         private Config _cfg;
         private Detector _detector;
@@ -38,9 +40,48 @@ namespace OneKeyTool
             _cfg = cfg;
             _detector = detector;
             Current = this;
+            _appIcon = GetAppIcon(32);
+            _trayIcon = GetAppIcon(16);
             BuildUi();
             LoadToUi();
             HookDetector();
+        }
+
+        /// <summary>
+        /// 取应用图标。优先从 exe 内嵌的图标资源里按需取 <paramref name="size"/> 原生分辨率：
+        /// Icon.ExtractAssociatedIcon 只会返回 32x32，托盘要 16x16 时会被系统缩放糊掉。
+        /// </summary>
+        private static Icon GetAppIcon(int size)
+        {
+            try
+            {
+                IntPtr h = Native.LoadImage(Native.GetModuleHandle(null),
+                    (IntPtr)Native.IDI_APP_ICON, Native.IMAGE_ICON, size, size, 0);
+                if (h != IntPtr.Zero)
+                {
+                    // Icon.FromHandle 不接管所有权，必须自己 DestroyIcon
+                    using (Icon tmp = Icon.FromHandle(h))
+                    {
+                        Icon copy = (Icon)tmp.Clone();
+                        Native.DestroyIcon(h);
+                        return copy;
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                string localIco = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
+                if (System.IO.File.Exists(localIco))
+                {
+                    using (Icon tmp = new Icon(localIco, size, size)) return (Icon)tmp.Clone();
+                }
+            }
+            catch { }
+
+            // 共享静态对象，必须返回副本，否则调用方 Dispose 会破坏全局状态
+            return (Icon)SystemIcons.Application.Clone();
         }
 
         // ==================== 界面 ====================
@@ -53,7 +94,7 @@ namespace OneKeyTool
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(530, 420);
             Font = new Font("Microsoft YaHei UI", 9F);
-            Icon = SystemIcons.Application;
+            Icon = _appIcon;
 
             int y = 16;
 
@@ -202,7 +243,7 @@ namespace OneKeyTool
         private void BuildTray()
         {
             _tray = new NotifyIcon();
-            _tray.Icon = SystemIcons.Application;
+            _tray.Icon = _trayIcon;
             _tray.Text = "键盘自定义键工具";
             _tray.Visible = true;
 
@@ -371,6 +412,9 @@ namespace OneKeyTool
             _pump.Stop();
             _detector.Stop();
             _tray.Visible = false;
+            _tray.Icon = null;   // 先解绑，避免释放时托盘仍在引用
+            _trayIcon.Dispose();
+            _appIcon.Dispose();
             Application.Exit();
         }
 

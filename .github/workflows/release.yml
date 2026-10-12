@@ -59,23 +59,28 @@ jobs:
             "/out:dist\OneKeyTool.exe",
             '/reference:System.dll', '/reference:System.Drawing.dll',
             '/reference:System.Windows.Forms.dll'
-          ) + $src
+          )
+          if (Test-Path 'src\app.ico') {
+            $args += '/win32icon:src\app.ico'
+          }
+          $args += $src
 
           & $csc @args
           if ($LASTEXITCODE -ne 0) { throw "编译失败，退出码 $LASTEXITCODE" }
           Write-Host "编译成功"
 
-      - name: 编译诊断工具（仅验证可编译，不随包发布）
+      - name: 编译诊断与辅助工具（仅验证可编译，不随包发布）
         shell: pwsh
         run: |
           $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
           New-Item -ItemType Directory -Force -Path 'dist\tools' | Out-Null
           foreach ($t in @(
-            @{ name='KeySpy';    file='tools\KeySpy\KeySpy.cs' },
-            @{ name='MacroTest'; file='tools\MacroTest\MacroTest.cs' }
+            @{ name='KeySpy';       file='tools\KeySpy\KeySpy.cs';             ref=@() },
+            @{ name='MacroTest';    file='tools\MacroTest\MacroTest.cs';       ref=@() },
+            @{ name='GenerateIcon'; file='tools\GenerateIcon\GenerateIcon.cs'; ref=@('/reference:System.Drawing.dll') }
           )) {
             & $csc /nologo /platform:x64 /optimize+ /codepage:65001 /utf8output `
-              "/out:dist\tools\$($t.name).exe" $t.file
+              @($t.ref) "/out:dist\tools\$($t.name).exe" $t.file
             if ($LASTEXITCODE -ne 0) { throw "$($t.name) 编译失败" }
           }
           Write-Host "诊断工具编译成功"

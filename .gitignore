@@ -1,0 +1,25 @@
+# ── 编译产物 ──
+*.exe
+*.pdb
+*.dll
+/dist/
+/build/
+
+# ── 运行时生成 ──
+*.log
+onekeytool.log
+
+# ── 诊断工具的输出 ──
+tools/KeySpy/logs/
+
+# ── 用户个人配置（仓库里只保留默认模板 config.ini）──
+config.local.ini
+
+# ── 编辑器 / 系统 ──
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+Thumbs.db
+desktop.ini

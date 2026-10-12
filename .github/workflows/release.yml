@@ -1,0 +1,140 @@
+name: Build and Release
+
+# 触发方式：
+#   1) 推送形如 v1.0.0 的 tag  → 自动编译、打包、发布 Release
+#   2) 在 Actions 页面手动触发（workflow_dispatch）→ 只产出构建物，不发布
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 确定版本号
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $v = $env:GITHUB_REF -replace '^refs/tags/', ''
+          } else {
+            $v = 'v0.0.0-dev'
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "版本号: $v"
+
+      - name: 编译 OneKeyTool.exe
+        shell: pwsh
+        run: |
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) {
+            $csc = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+          }
+          if (-not (Test-Path $csc)) { throw "找不到 C# 编译器 csc.exe" }
+          Write-Host "使用编译器: $csc"
+
+          $src = @(
+            'src\Program.cs', 'src\Native.cs', 'src\Config.cs', 'src\InputSender.cs',
+            'src\Detector.cs', 'src\ActionRunner.cs', 'src\MainForm.cs'
+          )
+          foreach ($f in $src) {
+            if (-not (Test-Path $f)) { throw "缺少源文件: $f" }
+          }
+
+          New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
+
+          $args = @(
+            '/nologo', '/target:winexe', '/platform:x64', '/optimize+',
+            '/codepage:65001', '/utf8output',
+            "/out:dist\OneKeyTool.exe",
+            '/reference:System.dll', '/reference:System.Drawing.dll',
+            '/reference:System.Windows.Forms.dll'
+          ) + $src
+
+          & $csc @args
+          if ($LASTEXITCODE -ne 0) { throw "编译失败，退出码 $LASTEXITCODE" }
+          Write-Host "编译成功"
+
+      - name: 编译诊断工具（仅验证可编译，不随包发布）
+        shell: pwsh
+        run: |
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          New-Item -ItemType Directory -Force -Path 'dist\tools' | Out-Null
+          foreach ($t in @(
+            @{ name='KeySpy';    file='tools\KeySpy\KeySpy.cs' },
+            @{ name='MacroTest'; file='tools\MacroTest\MacroTest.cs' }
+          )) {
+            & $csc /nologo /platform:x64 /optimize+ /codepage:65001 /utf8output `
+              "/out:dist\tools\$($t.name).exe" $t.file
+            if ($LASTEXITCODE -ne 0) { throw "$($t.name) 编译失败" }
+          }
+          Write-Host "诊断工具编译成功"
+          Remove-Item 'dist\tools' -Recurse -Force
+
+      - name: 组装发布目录
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $pkg = "dist\OneKeyTool-$v"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+
+          Copy-Item 'dist\OneKeyTool.exe' $pkg
+          Copy-Item 'config.ini'          $pkg
+          Copy-Item 'README.md'           $pkg
+          Copy-Item 'LICENSE'             $pkg
+
+          Write-Host "打包内容："
+          Get-ChildItem $pkg | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: 生成 ZIP
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $zip = "dist\OneKeyTool-$v-win-x64.zip"
+          Compress-Archive -Path "dist\OneKeyTool-$v\*" -DestinationPath $zip -Force
+          $size = (Get-Item $zip).Length
+          Write-Host "已生成 $zip（$([math]::Round($size/1KB,1)) KB）"
+
+      - name: 上传构建物
+        uses: actions/upload-artifact@v4
+        with:
+          name: OneKeyTool-${{ steps.ver.outputs.version }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
+          draft: false
+          body: |
+            ## 下载
+
+            下载下方的 `OneKeyTool-${{ steps.ver.outputs.version }}-win-x64.zip`，
+            **解压到任意文件夹**（建议放在文档或桌面，不要放 Program Files），
+            双击 `OneKeyTool.exe` 即可使用，**无需安装**。
+
+            ## 环境要求
+
+            - Windows 10 / 11（64 位）
+            - 系统自带 .NET Framework 4.0 以上（Win10/11 已内置，无需额外安装）
+
+            ## 首次使用
+
+            程序默认处于**观察模式**：只识别按键、不拦截。
+            按几次键盘上那个自定义键，确认界面上"已触发"计数正常增加后，
+            在设置窗口里**取消勾选"观察模式"**并点"保存并应用"，即可正式生效。
+
+            详见包内的 `README.md`。

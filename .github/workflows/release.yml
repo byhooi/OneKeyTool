@@ -121,6 +121,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          # 不设 name 时会直接用 tag 名（v1.1.0）当标题，这里加上项目名
+          name: OneKeyTool ${{ steps.ver.outputs.version }}
           files: dist/*.zip
           generate_release_notes: true
           draft: false

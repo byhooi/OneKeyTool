@@ -260,29 +260,68 @@ namespace OneKeyTool
             _tray.Visible = true;
 
             ContextMenuStrip menu = new ContextMenuStrip();
-            menu.Items.Add("显示设置", null, delegate { Show(); WindowState = FormWindowState.Normal; Activate(); });
-            menu.Items.Add("启用/停用", null, delegate
+
+            ToolStripMenuItem miShow = new ToolStripMenuItem("显示设置", null,
+                delegate { Show(); WindowState = FormWindowState.Normal; Activate(); });
+
+            ToolStripMenuItem miEnabled = new ToolStripMenuItem("启用拦截");
+            miEnabled.CheckOnClick = true;
+            miEnabled.Click += delegate
             {
-                _cfg.Enabled = !_cfg.Enabled;
+                _cfg.Enabled = miEnabled.Checked;
                 _chkEnabled.Checked = _cfg.Enabled;
                 _cfg.Save(_configPath);
                 UpdateStatus();
-            });
-            menu.Items.Add("开机自启", null, delegate
+            };
+
+            ToolStripMenuItem miDryRun = new ToolStripMenuItem("观察模式（只识别不拦截）");
+            miDryRun.CheckOnClick = true;
+            miDryRun.Click += delegate
             {
-                AutoStart.SetEnabled(!AutoStart.IsEnabled());
-                _chkAutoStart.Checked = AutoStart.IsEnabled();
-            });
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("重新加载配置", null, delegate
+                _cfg.DryRun = miDryRun.Checked;
+                _chkDryRun.Checked = _cfg.DryRun;
+                _cfg.Save(_configPath);
+                UpdateStatus();
+            };
+
+            ToolStripMenuItem miAutoStart = new ToolStripMenuItem("开机自动启动");
+            miAutoStart.CheckOnClick = true;
+            miAutoStart.Click += delegate
+            {
+                AutoStart.SetEnabled(miAutoStart.Checked);
+                // 以注册表实际结果为准，写入失败时勾选会回弹
+                miAutoStart.Checked = AutoStart.IsEnabled();
+                _chkAutoStart.Checked = miAutoStart.Checked;
+            };
+
+            ToolStripMenuItem miReload = new ToolStripMenuItem("重新加载配置", null, delegate
             {
                 Config fresh = Config.Load(_configPath);
                 _detector.UpdateConfig(fresh);
                 _cfg = fresh;
                 LoadToUi();
             });
+
+            ToolStripMenuItem miQuit = new ToolStripMenuItem("退出", null, delegate { Quit(); });
+
+            menu.Items.Add(miShow);
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("退出", null, delegate { Quit(); });
+            menu.Items.Add(miEnabled);
+            menu.Items.Add(miDryRun);
+            menu.Items.Add(miAutoStart);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(miReload);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(miQuit);
+
+            // 弹出前同步勾选状态：窗口里改过、或在任务管理器里禁用过自启，
+            // 都能反映到菜单上（勾选状态一律以实际状态为准）
+            menu.Opening += delegate
+            {
+                miEnabled.Checked = _cfg.Enabled;
+                miDryRun.Checked = _cfg.DryRun;
+                miAutoStart.Checked = AutoStart.IsEnabled();
+            };
 
             _tray.ContextMenuStrip = menu;
             _tray.DoubleClick += delegate { Show(); WindowState = FormWindowState.Normal; Activate(); };

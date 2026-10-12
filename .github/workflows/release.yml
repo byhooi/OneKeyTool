@@ -45,7 +45,7 @@ jobs:
 
           $src = @(
             'src\Program.cs', 'src\Native.cs', 'src\Config.cs', 'src\InputSender.cs',
-            'src\Detector.cs', 'src\ActionRunner.cs', 'src\MainForm.cs'
+            'src\Detector.cs', 'src\ActionRunner.cs', 'src\AutoStart.cs', 'src\MainForm.cs'
           )
           foreach ($f in $src) {
             if (-not (Test-Path $f)) { throw "缺少源文件: $f" }
@@ -141,5 +141,13 @@ jobs:
             程序默认处于**观察模式**：只识别按键、不拦截。
             按几次键盘上那个自定义键，确认界面上"已触发"计数正常增加后，
             在设置窗口里**取消勾选"观察模式"**并点"保存并应用"，即可正式生效。
+
+            ## 本次更新
+
+            - 新增**开机自动启动**：设置窗口勾选即可，写入当前用户注册表，
+              无需管理员权限；取消勾选立即移除。程序被移动后自启路径会自动更新。
+            - 修复设置窗口中"同时拦截 Win 键""观察模式"两个选项被界面裁掉、
+              无法点击的问题。
+            - 删除配置文件后重新生成时，默认值现与随包配置一致（均为观察模式）。
 
             详见包内的 `README.md`。

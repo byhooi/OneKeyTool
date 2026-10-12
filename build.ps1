@@ -31,7 +31,7 @@ if (Test-Path 'dist') { Remove-Item 'dist' -Recurse -Force }
 Write-Host "`n[1/3] 编译主程序..." -ForegroundColor Yellow
 $src = @(
     'src\Program.cs', 'src\Native.cs', 'src\Config.cs', 'src\InputSender.cs',
-    'src\Detector.cs', 'src\ActionRunner.cs', 'src\MainForm.cs'
+    'src\Detector.cs', 'src\ActionRunner.cs', 'src\AutoStart.cs', 'src\MainForm.cs'
 )
 foreach ($f in $src) { if (-not (Test-Path $f)) { throw "缺少源文件: $f" } }
 

@@ -41,8 +41,12 @@ namespace OneKeyTool
         /// <summary>整个宏序列的最长允许时长（毫秒），超时即放弃拦截。</summary>
         public int MacroTimeoutMs = 4000;
 
-        /// <summary>观察模式：只识别、记录、提示，但不拦截任何按键。用于先验证识别是否准确。</summary>
-        public bool DryRun = false;
+        /// <summary>
+        /// 观察模式：只识别、记录、提示，但不拦截任何按键。用于先验证识别是否准确。
+        /// 默认 true —— 与随包分发的 config.ini 模板一致，也与 README 的描述一致。
+        /// 若为 false，用户删掉 config.ini 重新生成时会直接进入拦截模式，与文档不符。
+        /// </summary>
+        public bool DryRun = true;
 
         /// <summary>测试用：是否处理本程序注入的按键。正常运行必须为 false，否则会自我触发。</summary>
         public bool AcceptInjected = false;

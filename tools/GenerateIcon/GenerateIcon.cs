@@ -71,7 +71,7 @@ namespace OneKeyTool.Tools
                 }
 
                 // 256基准尺寸绘制
-                DrawVectorKeycap(g, scale, size);
+                DrawVectorKeycap(g, scale);
             }
             return bmp;
         }
@@ -131,7 +131,7 @@ namespace OneKeyTool.Tools
         /// <summary>
         /// 矢量级立体键帽绘制（适用于 24 到 256 尺寸）
         /// </summary>
-        private static void DrawVectorKeycap(Graphics g, float s, int size)
+        private static void DrawVectorKeycap(Graphics g, float s)
         {
             // 投影/光晕
             using (GraphicsPath shadowPath = GetRoundedRectPath(18 * s, 26 * s, 220 * s, 218 * s, 42 * s))
@@ -306,8 +306,8 @@ namespace OneKeyTool.Tools
         // ==================== 多分辨率 ICO 编码器 ====================
 
         /// <summary>
-        /// 将多张尺寸不同的 Bitmap 合成为标准 Windows .ico 文件
-        /// 针对 16~128 使用高质量 PNG/DIB 封装，兼具跨版本兼容性
+        /// 将多张尺寸不同的 Bitmap 合成为标准 Windows .ico 文件。
+        /// 所有尺寸均以 PNG 封装（Vista 及以上原生支持；本工具不支持 XP）。
         /// </summary>
         private static void SaveMultiSizeIcon(List<Bitmap> bitmaps, string filePath)
         {

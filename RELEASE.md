@@ -82,6 +82,7 @@ git push origin v1.0.0
 
 - [ ] 本地跑过 `.\build.ps1` 且编译无警告
 - [ ] 实际按过自定义键，确认识别正常、无误报
+- [ ] 设置窗口里所有复选框都可见（改过界面布局时尤其要确认）
 - [ ] `git status` 里没有 `.exe` / `.log` / `dist/` 被误加
 - [ ] `README.md` 里的功能说明与实际一致
 - [ ] tag 名与预期版本一致（如 `v1.0.0`，注意 `v` 前缀）
@@ -131,3 +132,8 @@ keyboard/
 ├─ src/                            ← 主程序源码
 └─ tools/                          ← 诊断工具源码
 ```
+
+> **注意**：新增 `src/*.cs` 源文件时，要同步更新两处的文件列表，
+> 否则 CI 或本地构建会漏编译：
+> - `build.ps1` 里的 `$src` 数组
+> - `.github/workflows/release.yml` 里 `编译 OneKeyTool.exe` 步骤的 `$src` 数组

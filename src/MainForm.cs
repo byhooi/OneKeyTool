@@ -22,6 +22,7 @@ namespace OneKeyTool
         private Button _btnBrowse;
         private CheckBox _chkSuppressWin;
         private CheckBox _chkDryRun;
+        private CheckBox _chkAutoStart;
         private Label _lblStatus;
         private Label _lblStats;
         private Label _lblHint;
@@ -42,14 +43,16 @@ namespace OneKeyTool
             Current = this;
             _appIcon = GetAppIcon(32);
             _trayIcon = GetAppIcon(16);
+            AutoStart.RefreshPath();   // 程序若被移动，修正自启项里的旧路径
             BuildUi();
             LoadToUi();
             HookDetector();
         }
 
         /// <summary>
-        /// 取应用图标。优先从 exe 内嵌的图标资源里按需取 <paramref name="size"/> 原生分辨率：
+        /// 取应用图标，从 exe 内嵌的图标资源里按需取 <paramref name="size"/> 原生分辨率。
         /// Icon.ExtractAssociatedIcon 只会返回 32x32，托盘要 16x16 时会被系统缩放糊掉。
+        /// 构建时 app.ico 已嵌入 exe，故此处总能成功；万一失败则退回系统默认图标。
         /// </summary>
         private static Icon GetAppIcon(int size)
         {
@@ -59,23 +62,17 @@ namespace OneKeyTool
                     (IntPtr)Native.IDI_APP_ICON, Native.IMAGE_ICON, size, size, 0);
                 if (h != IntPtr.Zero)
                 {
-                    // Icon.FromHandle 不接管所有权，必须自己 DestroyIcon
-                    using (Icon tmp = Icon.FromHandle(h))
+                    try
                     {
-                        Icon copy = (Icon)tmp.Clone();
-                        Native.DestroyIcon(h);
-                        return copy;
+                        using (Icon tmp = Icon.FromHandle(h))
+                        {
+                            return (Icon)tmp.Clone();
+                        }
                     }
-                }
-            }
-            catch { }
-
-            try
-            {
-                string localIco = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
-                if (System.IO.File.Exists(localIco))
-                {
-                    using (Icon tmp = new Icon(localIco, size, size)) return (Icon)tmp.Clone();
+                    finally
+                    {
+                        Native.DestroyIcon(h);   // FromHandle 不接管所有权，必须显式销毁
+                    }
                 }
             }
             catch { }
@@ -92,7 +89,6 @@ namespace OneKeyTool
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(530, 420);
             Font = new Font("Microsoft YaHei UI", 9F);
             Icon = _appIcon;
 
@@ -108,7 +104,8 @@ namespace OneKeyTool
             GroupBox grp = new GroupBox();
             grp.Text = "按下自定义键时执行";
             grp.Location = new Point(16, y);
-            grp.Size = new Size(488, 200);
+            // 内容最低到 202（两行提示的底部），加上标题栏与底边距故取 222
+            grp.Size = new Size(488, 222);
             Controls.Add(grp);
 
             int gy = 24;
@@ -140,34 +137,46 @@ namespace OneKeyTool
             _btnBrowse.Click += OnBrowse;
             grp.Controls.Add(_btnBrowse);
 
+            // 两行提示要完整落在 GroupBox 内，否则底边框会切掉半行
             Label hint = new Label();
             hint.Text = "网址例：https://www.bing.com      快捷键例：Ctrl+Alt+S 或 Win+Shift+S";
-            hint.Location = new Point(16, gy + 34);
-            hint.Size = new Size(460, 20);
+            hint.Location = new Point(16, gy + 32);
+            hint.Size = new Size(460, 18);
             hint.ForeColor = Color.Gray;
             grp.Controls.Add(hint);
 
             Label hint2 = new Label();
             hint2.Text = "程序例：C:\\Windows\\System32\\notepad.exe";
-            hint2.Location = new Point(16, gy + 54);
-            hint2.Size = new Size(460, 20);
+            hint2.Location = new Point(16, gy + 50);
+            hint2.Size = new Size(460, 18);
             hint2.ForeColor = Color.Gray;
             grp.Controls.Add(hint2);
 
+            y += grp.Height + 14;
+
+            // 拦截范围与启动行为放在 GroupBox 之外：
+            // 原先它们在 GroupBox 内 y=230/254，而 GroupBox 只有 200 高，被整个裁掉不可见。
             _chkSuppressWin = new CheckBox();
             _chkSuppressWin.Text = "同时拦截 Win 键（推荐，可避免弹出“运行”对话框）";
-            _chkSuppressWin.Location = new Point(16, gy + 84);
+            _chkSuppressWin.Location = new Point(16, y);
             _chkSuppressWin.AutoSize = true;
-            grp.Controls.Add(_chkSuppressWin);
+            Controls.Add(_chkSuppressWin);
+            y += 26;
 
             _chkDryRun = new CheckBox();
             _chkDryRun.Text = "观察模式：只识别不拦截（先用它验证识别是否准确）";
-            _chkDryRun.Location = new Point(16, gy + 108);
+            _chkDryRun.Location = new Point(16, y);
             _chkDryRun.AutoSize = true;
             _chkDryRun.ForeColor = Color.FromArgb(180, 95, 6);
-            grp.Controls.Add(_chkDryRun);
+            Controls.Add(_chkDryRun);
+            y += 26;
 
-            y += 212;
+            _chkAutoStart = new CheckBox();
+            _chkAutoStart.Text = "开机自动启动（登录后静默运行，只在托盘显示图标）";
+            _chkAutoStart.Location = new Point(16, y);
+            _chkAutoStart.AutoSize = true;
+            Controls.Add(_chkAutoStart);
+            y += 30;
 
             _lblStatus = new Label();
             _lblStatus.Location = new Point(16, y);
@@ -220,6 +229,9 @@ namespace OneKeyTool
             btnOpenCfg.Click += OnOpenConfig;
             Controls.Add(btnOpenCfg);
 
+            // 高度按内容算，避免以后加控件又被裁掉
+            ClientSize = new Size(530, y + 30 + 16);
+
             BuildTray();
 
             _pump = new System.Windows.Forms.Timer();
@@ -256,6 +268,11 @@ namespace OneKeyTool
                 _cfg.Save(_configPath);
                 UpdateStatus();
             });
+            menu.Items.Add("开机自启", null, delegate
+            {
+                AutoStart.SetEnabled(!AutoStart.IsEnabled());
+                _chkAutoStart.Checked = AutoStart.IsEnabled();
+            });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("重新加载配置", null, delegate
             {
@@ -278,6 +295,8 @@ namespace OneKeyTool
             _chkEnabled.Checked = _cfg.Enabled;
             _chkSuppressWin.Checked = _cfg.SuppressWindowsKey;
             _chkDryRun.Checked = _cfg.DryRun;
+            // 自启状态以注册表实际值为准，不存配置文件
+            _chkAutoStart.Checked = AutoStart.IsEnabled();
             _txtValue.Text = _cfg.Value;
 
             switch (_cfg.Kind)
@@ -290,7 +309,8 @@ namespace OneKeyTool
             UpdateStatus();
         }
 
-        private void SaveFromUi()
+        /// <summary>把界面设置写回配置。返回开机自启是否写入成功。</summary>
+        private bool SaveFromUi()
         {
             _cfg.Enabled = _chkEnabled.Checked;
             _cfg.SuppressWindowsKey = _chkSuppressWin.Checked;
@@ -303,6 +323,7 @@ namespace OneKeyTool
             else _cfg.Kind = ActionKind.Url;
 
             _cfg.Save(_configPath);
+            return AutoStart.SetEnabled(_chkAutoStart.Checked);
         }
 
         private void UpdateStatus()
@@ -362,9 +383,19 @@ namespace OneKeyTool
 
         private void OnSave(object sender, EventArgs e)
         {
-            SaveFromUi();
-            LoadToUi();
-            MessageBox.Show(this, "已保存。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            bool autoOk = SaveFromUi();
+            LoadToUi();   // 自启失败时复选框会回弹为注册表实际状态
+
+            string msg = "已保存。";
+            if (!autoOk)
+            {
+                msg += "\n\n但开机自启设置未能写入注册表，请检查权限后重试。";
+                MessageBox.Show(this, msg, "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            else
+            {
+                MessageBox.Show(this, msg, "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
 
         private void OnTest(object sender, EventArgs e)

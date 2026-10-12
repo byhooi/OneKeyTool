@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Windows.Forms;
 
 namespace OneKeyTool
@@ -64,12 +65,24 @@ namespace OneKeyTool
                 }
                 else
                 {
-                    int sp = file.IndexOf(' ');
-                    if (sp > 0 && file.Substring(sp).Trim().IndexOf('.') < 0)
+                    // 先检查整串路径是否存在（含空格的路径也能识别）
+                    // 若不存在则尝试按第一个空格拆分，验证候选路径的合理性
+                    if (!File.Exists(file) && !Directory.Exists(file))
                     {
-                        // 只有后面的片段不含点号时才当参数拆（避免误拆含空格的文件名）
-                        args = file.Substring(sp + 1).Trim();
-                        file = file.Substring(0, sp);
+                        int sp = file.IndexOf(' ');
+                        if (sp > 0)
+                        {
+                            string candidate = file.Substring(0, sp);
+                            // 候选路径存在，或以 .exe 结尾（允许 PATH 中的命令），则视为可执行文件
+                            if (File.Exists(candidate) ||
+                                candidate.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+                                candidate.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) ||
+                                candidate.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
+                            {
+                                args = file.Substring(sp + 1).Trim();
+                                file = candidate;
+                            }
+                        }
                     }
                 }
 

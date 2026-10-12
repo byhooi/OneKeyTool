@@ -144,7 +144,7 @@ internal static class MacroTest
         // 1) Win↓ 之后紧跟 R↓（实测固件把 R↓ 发在 Win↑ 之前），再 Win↑ R↑
         Key(VK_LWIN, true, true);
         Gap(10);
-        Key(0x52, false, false);    // R↓（非扩展）
+        Key(0x52, true, false);     // R↓（按下）
         Gap(2);
         Key(VK_LWIN, false, true);  // Win↑
         Gap(4);

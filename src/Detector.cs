@@ -77,10 +77,11 @@ namespace OneKeyTool
         /// <summary>可选：调试日志回调。</summary>
         public event Action<string> Trace;
 
-        public Detector(Config cfg)
+        public Detector(Config cfg, string logPath = null)
         {
             _cfg = cfg;
             _sig = cfg.Signature;
+            _logPath = logPath ?? "";
         }
 
         /// <summary>热重载配置。切换时会先把暂扣的按键放行，避免卡键。</summary>
@@ -560,26 +561,20 @@ namespace OneKeyTool
 
         private void Log(string s)
         {
-            try
+            if (!string.IsNullOrEmpty(_logPath))
             {
-                string line = DateTime.Now.ToString("HH:mm:ss.fff") + "  " + s;
-                File.AppendAllText(_logPath, line + Environment.NewLine, new UTF8Encoding(false));
+                try
+                {
+                    string line = DateTime.Now.ToString("HH:mm:ss.fff") + "  " + s;
+                    File.AppendAllText(_logPath, line + Environment.NewLine, new UTF8Encoding(false));
+                }
+                catch { }
             }
-            catch { }
 
             Action<string> t = Trace;
             if (t != null) t(s);
         }
 
         private readonly string _logPath;
-
-        public Detector(Config cfg, string logPath)
-        {
-            _cfg = cfg;
-            _sig = cfg.Signature;
-            _logPath = logPath;
-        }
-
-        /// <summary>热重载配置。切换时会先把暂扣的按键放行，避免卡键。</summary>
     }
 }

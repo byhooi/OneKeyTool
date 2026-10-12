@@ -118,7 +118,8 @@ namespace OneKeyTool
                     case "rwaitms":
                         c.RWaitMs = ParseInt(val, c.RWaitMs);
                         break;
-                    case "macrotimems":
+                    case "macrotimeoutms":   // 正确拼写
+                    case "macrotimems":      // 旧拼写兼容
                         c.MacroTimeoutMs = ParseInt(val, c.MacroTimeoutMs);
                         break;
                 }

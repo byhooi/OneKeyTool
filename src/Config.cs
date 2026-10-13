@@ -30,11 +30,15 @@ namespace OneKeyTool
         /// <summary>是否同时拦截 Win 键。保持 true 可避免弹出“运行”对话框。</summary>
         public bool SuppressWindowsKey = true;
 
-        /// <summary>检测到 Win↓ 后，等待 Win↑ 出现的时长（毫秒）。</summary>
-        public int WinWaitMs = 80;
+        /// <summary>
+        /// 检测到 Win↓ 后，等待 Win↑ 出现的时长（毫秒）。实测固件这一跳约 12ms，取 50 已有 4 倍余量。
+        /// 注意：用户实际感到的延迟是"本值 + 一个收尾定时器周期"（Detector.TickIntervalMs），
+        /// 单独按 Win 时大约 65ms 后开始菜单才弹出，所以这个值不宜再放大。
+        /// </summary>
+        public int WinWaitMs = 50;
 
-        /// <summary>检测到 Win↑ 后，等待 R↑ 出现的时长（毫秒）。宏里这一跳约 1.2ms，故取小值以免拖慢正常按 Win 键。</summary>
-        public int WinUpWaitMs = 80;
+        /// <summary>检测到 Win↑ 后，等待 R↑ 出现的时长（毫秒）。宏里这一跳约 4ms，故取小值以免拖慢正常按 Win 键。</summary>
+        public int WinUpWaitMs = 50;
 
         /// <summary>检测到 Win+R 后，等待首个宏字符出现的时长（毫秒）。</summary>
         public int RWaitMs = 250;

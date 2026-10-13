@@ -20,6 +20,8 @@ Enter
 
 字符间隔 0.03~15ms，而人打字最快 60ms 以上——差两个数量级，这是识别的依据。
 
+`tests\StateMachineTests.cs` 的 `RealFirmwareMacro()` 逐键码复现了这条波形（含 Shift+OEM 标点键、尾部 `Enter↑`）。改 `tools\MacroTest\MacroTest.cs` 的 `ReplayOnce()` 时要同步改它，否则回归测试验的就不是真实输入了。
+
 ## 构建与测试
 
 ```powershell
@@ -56,7 +58,7 @@ dist\_tools\StateMachineTests.exe
 | 文件 | 职责 |
 |---|---|
 | `src/MacroEngine.cs` | **纯逻辑状态机**。不碰 Win32、不做注入；时间由调用方注入（`Feed(ev, nowMs)` / `Tick(nowMs)`），暂扣事件通过 `TakeReplay` 交还 |
-| `src/Detector.cs` | 适配层。装钩子、翻译事件、喂引擎、重放注入、异步日志 |
+| `src/Detector.cs` | 适配层。在**专用线程**上装钩子、翻译事件、喂引擎、重放注入、驱动超时与钩子自检、异步日志 |
 | `src/InputSender.cs` | `SendInput` 封装 |
 | `src/ActionRunner.cs` | 执行动作（url / program / hotkey / none） |
 | `src/MainForm.cs` | 设置界面 + 托盘常驻 |
@@ -69,14 +71,24 @@ dist\_tools\StateMachineTests.exe
 
 这是项目最需要保证的性质：README 教用户"先在观察模式验证识别准确，再关掉观察模式启用拦截"。**一旦两者漂移，用户会看到观察模式报告识别成功、切到拦截模式却不触发**——直接毁掉信任。历史上这里曾有两套并行状态机（`_state` / `_obsState`）导致漂移，抽成 `MacroEngine` 就是为了从根上消除它。**不要再引入第二份识别逻辑。**
 
-**2. 钩子回调里不能做磁盘 IO。**
-低级键盘钩子受 `LowLevelHooksTimeout`（默认 300ms）限制，回调超时后 **Windows 会静默摘掉钩子**，程序毫不知情（`_hook` 句柄仍非零，`Start()` 曾返回 `true`）。用户看到的现象是"时灵时不灵"，极难排查。所以 `Detector.Log()` 只入队 + `Set()`，磁盘写入在后台线程 `WriteLogs()`（2MB 轮转）。
+**2. 钩子跑在专用线程上，那条线程除了消息循环什么都不做。**
+低级键盘钩子受 `LowLevelHooksTimeout`（默认 300ms）限制，回调超时后 **Windows 会静默摘掉钩子**，程序毫不知情（`_hook` 句柄仍非零，`Start()` 曾返回 `true`）。用户看到的现象是"时灵时不灵"，极难排查。
+
+所以钩子由 `Detector.HookThreadProc` 那条专用线程安装并跑消息循环。**别再把它挪回界面线程**：钩子回调在"安装它的那个线程"上执行，界面线程上的任何耗时操作（写配置、`Process.Start`）都会顺带把钩子一起拖住。配套的四条：
+
+- `Detector.Log()` 只入队 + `Set()`，磁盘写入在后台线程 `WriteLogs()`（2MB 轮转）——回调里永远不做磁盘 IO。
+- 超时收尾由该线程自己的 `SetTimer`（`TickIntervalMs = 15`）驱动，界面定时器不再参与识别。
+- `TickIntervalMs` 直接决定"单独按 Win"多等多久（实际延迟 ≈ `WinWaitMs` + 本值），改动它要同步 README 与 `config.ini` 里的延迟说明。
+- 每 10 分钟在空闲（`HeldCount == 0`）时 `ReinstallHook()` 自检重装一次，把被静默摘掉的钩子自愈回来。**必须先摘后装**——两个钩子并存会让每个按键被处理两次。
 
 **3. 自动重复事件计入 `_held` 与上限，但不刷新超时窗口。**
 这是曾经的 P0 回归：重复分支既进 `_held` 又顺延 `_deadline`，导致按住某键时状态永不超时、`_held` 无界增长（实测 2007 个事件），松手后一次性重放上千个按键。`MacroEngine.cs` 里相关注释标明了这一点，改动该处务必对照「宏中长按不无界增长」用例。
 
 **4. 重放安全靠 `dwExtraInfo` 魔数。**
 `InputSender.Magic` = `0x4F4B5459`（"OKTY"）。钩子无条件忽略带此标记的事件，所以"放弃拦截 → 重放"不会自我循环。重放走 `KEYEVENTF_SCANCODE` + 原始扫描码，`Scan == 0` 时回退虚拟键。
+
+**5. 命中后要吞掉被丢弃序列里"按下未抬起"的键。**
+实测固件在回车之后还会补一个 `Enter↑`，而触发命中的那个 `Enter↓` 并不在 `_held` 里（`HandleMacro` 在 `_held.Add` 之前就 `return` 了）。`Confirm()` 因此要把它们记进 `_dangling`，在 Idle 状态下连抬起事件一起吞掉，否则系统会收到一个没有对应按下的孤立 KEYUP。由「命中后尾部抬起事件」用例保证。注意 `_dangling` 的赋值必须在两种模式下完全一致——观察模式只由 `Detector` 把 `Swallow` 降级为放行，引擎内部状态不能分叉。
 
 ### 测试钩子
 

@@ -256,7 +256,8 @@ namespace OneKeyTool
 
             _pump = new System.Windows.Forms.Timer();
             _pump.Interval = 50;
-            _pump.Tick += delegate { _detector.Tick(); UpdateStats(); };
+            // 超时收尾现在由钩子线程自己的定时器驱动，这里只负责刷新界面上的计数
+            _pump.Tick += delegate { UpdateStats(); };
             _pump.Start();
 
             Resize += OnResize;
@@ -292,6 +293,8 @@ namespace OneKeyTool
                 _cfg.Enabled = miEnabled.Checked;
                 _chkEnabled.Checked = _cfg.Enabled;
                 _cfg.Save(_configPath);
+                // 钩子跑在另一个线程上：顺带把新配置交给它（同时会把暂扣的按键放行）
+                _detector.UpdateConfig(_cfg);
                 UpdateStatus();
             };
 
@@ -302,6 +305,7 @@ namespace OneKeyTool
                 _cfg.DryRun = miDryRun.Checked;
                 _chkDryRun.Checked = _cfg.DryRun;
                 _cfg.Save(_configPath);
+                _detector.UpdateConfig(_cfg);
                 UpdateStatus();
             };
 
@@ -369,8 +373,8 @@ namespace OneKeyTool
             UpdateStatus();
         }
 
-        /// <summary>把界面设置写回配置。返回开机自启是否写入成功。</summary>
-        private bool SaveFromUi()
+        /// <summary>把界面上的设置写回 _cfg（不落盘）。</summary>
+        private void ApplyUiToConfig()
         {
             _cfg.Enabled = _chkEnabled.Checked;
             _cfg.SuppressWindowsKey = _chkSuppressWin.Checked;
@@ -381,7 +385,12 @@ namespace OneKeyTool
             else if (_rbProgram.Checked) _cfg.Kind = ActionKind.Program;
             else if (_rbHotkey.Checked) _cfg.Kind = ActionKind.Hotkey;
             else _cfg.Kind = ActionKind.Url;
+        }
 
+        /// <summary>把界面设置写回配置并落盘。返回开机自启是否写入成功。</summary>
+        private bool SaveFromUi()
+        {
+            ApplyUiToConfig();
             _cfg.Save(_configPath);
             return AutoStart.SetEnabled(_chkAutoStart.Checked);
         }
@@ -409,6 +418,11 @@ namespace OneKeyTool
         {
             _lblStats.Text = string.Format("已触发 {0} 次 / 拦截 {1} 键",
                 _detector.TriggerCount, _detector.SuppressedEventCount);
+
+            // 钩子被系统摘掉时程序侧本来毫无感知（句柄仍非零），这里至少把状态亮出来
+            bool alive = _detector.HookAlive;
+            if (!alive) _lblStats.Text += "  ·  钩子已失效";
+            _lblStats.ForeColor = alive ? SystemColors.ControlText : Color.Firebrick;
         }
 
         // ==================== 事件 ====================
@@ -549,7 +563,8 @@ namespace OneKeyTool
 
         private void OnTest(object sender, EventArgs e)
         {
-            SaveFromUi();
+            // 只按界面上的当前设置试跑一次，不落盘——点"测试"不该顺手改配置文件
+            ApplyUiToConfig();
             ActionRunner.Run(_cfg);
         }
 

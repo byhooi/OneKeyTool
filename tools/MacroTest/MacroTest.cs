@@ -1,6 +1,8 @@
 // MacroTest.cs — 自动回放实测抓到的按键序列，用于验证 OneKeyTool 的识别逻辑
 // 序列来源：KeySpy 抓包（固件宏真实波形）
-//   Win↓ Win↑ R↑ [约1.4ms] h t t p Shift+: / / oneclick.lenovo.com.cn [1.1s] Enter
+//   Win↓ R↓ Win↑ R↑ [约1.4ms] h t t p Shift+: / / oneclick.lenovo.com.cn [1.1s] Enter↓ Enter↑
+// 注意：实测固件把 R↓ 发在 Win↑ 之前；标点是 Shift+OEM 键（0xBA / 0xBF / 0xBE），不是 VK 0x3A / 0x2F / 0x2E。
+// 这条波形同时也是 tests\StateMachineTests.cs 里 RealFirmwareMacro() 的依据，改这里要同步改那边。
 //
 // 用法：先以测试配置启动 OneKeyTool，再运行本程序。
 // 编译：csc /platform:x64 /out:MacroTest.exe MacroTest.cs

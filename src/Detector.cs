@@ -1,11 +1,19 @@
 // Detector.cs — 键盘钩子的安装与事件分发
 //
 // 识别逻辑本身在 MacroEngine.cs（纯逻辑、可单元测试）。本类只负责：
-//   1. 安装 / 卸载低级键盘钩子，把原始事件翻译成 KeyEvent；
+//   1. 在**专用线程**上安装 / 卸载低级键盘钩子，把原始事件翻译成 KeyEvent；
 //   2. 把事件喂给 MacroEngine，按结果决定吞掉还是放行；
 //   3. 观察模式下把 Swallow 降级为放行、且不做重放；
 //   4. 把暂扣事件真正注入回系统（InputSender）；
-//   5. 异步日志。
+//   5. 驱动超时收尾（专用线程上的定时器）与钩子自检重装；
+//   6. 异步日志。
+//
+// 为什么钩子必须放在专用线程上：
+//   低级键盘钩子的回调在"安装它的那个线程"上执行，而 Windows 对回调有
+//   LowLevelHooksTimeout（默认 300ms）限制，超时后会**静默摘掉钩子**。
+//   早先钩子装在界面线程上，界面线程上任何耗时操作（写配置、ShellExecute
+//   启动程序）都会顺带把钩子一起拖住。专用线程只跑消息循环、不做别的事，
+//   从根上切断这条耦合，也让 _gate 这把锁真正有了意义。
 //
 // 观察模式与拦截模式共用同一个 MacroEngine，因此两种模式的识别结果必然一致——
 // 用户正是先靠观察模式确认识别准确，再切到拦截模式的，两者不一致会直接毁掉信任。
@@ -22,6 +30,19 @@ namespace OneKeyTool
 {
     internal class Detector
     {
+        /// <summary>钩子线程上驱动超时收尾的定时器间隔（毫秒）。</summary>
+        /// <remarks>
+        /// 这个值直接决定"单独按 Win 键"多等多久才恢复：实际延迟约为
+        /// WinWaitMs + 本值。故取小值，让实际延迟贴近配置值。
+        /// </remarks>
+        private const int TickIntervalMs = 15;
+
+        /// <summary>钩子自检重装的间隔（毫秒）。见 ReinstallHook 的说明。</summary>
+        private const long HookReinstallIntervalMs = 10 * 60 * 1000;
+
+        /// <summary>自检重装失败后的重试间隔（毫秒）。</summary>
+        private const long HookReinstallRetryMs = 5 * 60 * 1000;
+
         private Config _cfg;
         private readonly MacroEngine _engine;
         private readonly object _gate = new object();
@@ -41,11 +62,22 @@ namespace OneKeyTool
         private readonly List<KeyEvent> _replayBuffer = new List<KeyEvent>();
 
         private Native.LowLevelKeyboardProc _hookProc;   // 持有引用防止被 GC
-        private IntPtr _hook = IntPtr.Zero;
+        private volatile IntPtr _hook = IntPtr.Zero;
+
+        // 专用钩子线程
+        private Thread _hookThread;
+        private readonly ManualResetEvent _hookReady = new ManualResetEvent(false);
+        private volatile bool _hookAlive;
+        private volatile bool _hookStopRequested;
+        private volatile uint _hookThreadId;
+        private long _nextReinstallAt;                   // 只在钩子线程上读写
 
         // 统计
         public long TriggerCount;
         public long SuppressedEventCount;
+
+        /// <summary>钩子当前是否处于已安装状态。</summary>
+        public bool HookAlive { get { return _testMode || _hookAlive; } }
 
         /// <summary>命中自定义键时触发。参数为 true 表示当前处于观察模式（未拦截、不应执行动作）。</summary>
         public event Action<bool> Triggered;
@@ -65,35 +97,55 @@ namespace OneKeyTool
 
         // ==================== 生命周期 ====================
 
+        /// <summary>
+        /// 启动钩子线程并等待它报告安装结果。返回 false 表示钩子没装上。
+        /// </summary>
         public bool Start()
         {
-            if (_hook != IntPtr.Zero) return true;
-            _hookProc = HookCallback;
-            IntPtr hmod = Native.GetModuleHandle(null);
-            _hook = Native.SetWindowsHookEx(Native.WH_KEYBOARD_LL, _hookProc, hmod, 0);
-            if (_hook == IntPtr.Zero)
+            if (_testMode) return true;
+            if (_hookThread != null) return true;
+
+            _hookStopRequested = false;
+            _hookAlive = false;
+            _hookReady.Reset();
+
+            _hookThread = new Thread(HookThreadProc);
+            _hookThread.IsBackground = true;
+            _hookThread.Name = "OneKeyTool hook";
+            _hookThread.Start();
+
+            // 等待安装结果：Program.cs 靠返回值决定是否弹"安装钩子失败"。
+            if (!_hookReady.WaitOne(5000))
             {
-                Log("SetWindowsHookEx 失败，错误码 " + Marshal.GetLastWin32Error());
+                Log("钩子线程未在 5 秒内完成安装");
                 return false;
             }
-            Log("键盘钩子已安装");
-            return true;
+            return _hookAlive;
         }
 
         public void Stop()
         {
-            lock (_gate)
+            Thread t = _hookThread;
+            if (t != null && t.IsAlive)
             {
-                if (_hook != IntPtr.Zero)
+                _hookStopRequested = true;
+                // 唤醒阻塞在 GetMessage 上的钩子线程；线程退出前会自己摘钩子并放行暂扣事件
+                Native.PostThreadMessage(_hookThreadId, Native.WM_APP_QUIT, IntPtr.Zero, IntPtr.Zero);
+
+                if (!t.Join(3000))
                 {
-                    Native.UnhookWindowsHookEx(_hook);
-                    _hook = IntPtr.Zero;
+                    // 兜底：线程没退干净也必须把钩子摘掉，否则键盘一直受本程序影响
+                    Log("钩子线程未在 3 秒内退出，强制卸载钩子");
+                    IntPtr h = _hook;
+                    if (h != IntPtr.Zero)
+                    {
+                        Native.UnhookWindowsHookEx(h);
+                        _hook = IntPtr.Zero;
+                    }
                 }
-                // 卸载时把暂扣事件放行，避免卡键
-                _engine.Reset("钩子卸载");
-                FlushReplay();
             }
-            Log("键盘钩子已卸载");
+            _hookThread = null;
+            _hookAlive = false;
 
             lock (_logQueue) _logStopping = true;
             _logSignal.Set();
@@ -109,6 +161,125 @@ namespace OneKeyTool
                 FlushReplay();
                 _cfg = cfg;
             }
+        }
+
+        // ==================== 钩子线程 ====================
+
+        /// <summary>
+        /// 钩子线程主体：装钩子 → 跑消息循环（超时收尾靠线程定时器）→ 退出时摘钩子。
+        /// 这个线程上除了消息循环什么都不做，这是钩子不被拖超时的前提。
+        /// </summary>
+        private void HookThreadProc()
+        {
+            // 先把消息队列建出来，保证 Stop() 的 PostThreadMessage 一定投得进来
+            Native.MSG msg;
+            Native.PeekMessage(out msg, IntPtr.Zero, 0, 0, Native.PM_NOREMOVE);
+            _hookThreadId = Native.GetCurrentThreadId();
+
+            _hookProc = HookCallback;
+            IntPtr hmod = Native.GetModuleHandle(null);
+            _hook = Native.SetWindowsHookEx(Native.WH_KEYBOARD_LL, _hookProc, hmod, 0);
+            if (_hook == IntPtr.Zero)
+            {
+                Log("SetWindowsHookEx 失败，错误码 " + Marshal.GetLastWin32Error());
+                _hookAlive = false;
+                _hookReady.Set();
+                return;
+            }
+
+            Log("键盘钩子已安装（线程 " + _hookThreadId + "）");
+            _hookAlive = true;
+            _nextReinstallAt = _clock.ElapsedMilliseconds + HookReinstallIntervalMs;
+            _hookReady.Set();
+
+            // 线程定时器：WM_TIMER 会被投到这个线程的队列上（hwnd 为空）
+            IntPtr timer = Native.SetTimer(IntPtr.Zero, IntPtr.Zero, (uint)TickIntervalMs, IntPtr.Zero);
+
+            try
+            {
+                while (!_hookStopRequested)
+                {
+                    if (Native.GetMessage(out msg, IntPtr.Zero, 0, 0) <= 0) break;
+                    if (msg.message == Native.WM_APP_QUIT) break;
+
+                    if (msg.message == Native.WM_TIMER && msg.hwnd == IntPtr.Zero)
+                    {
+                        OnTickTimer();
+                        continue;
+                    }
+
+                    Native.TranslateMessage(ref msg);
+                    Native.DispatchMessage(ref msg);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("钩子线程异常退出: " + ex.Message);
+            }
+
+            if (timer != IntPtr.Zero) Native.KillTimer(IntPtr.Zero, timer);
+
+            // 卸载前先把暂扣事件放行，避免卡键
+            lock (_gate)
+            {
+                _engine.Reset("钩子卸载");
+                FlushReplay();
+            }
+
+            IntPtr h = _hook;
+            if (h != IntPtr.Zero)
+            {
+                Native.UnhookWindowsHookEx(h);
+                _hook = IntPtr.Zero;
+            }
+            _hookAlive = false;
+            Log("键盘钩子已卸载");
+        }
+
+        /// <summary>线程定时器到点：推进状态机超时，并偶尔自检重装钩子。</summary>
+        private void OnTickTimer()
+        {
+            lock (_gate)
+            {
+                _engine.Tick(Now);
+                FlushReplay();
+
+                if (_clock.ElapsedMilliseconds >= _nextReinstallAt && _engine.HeldCount == 0)
+                    ReinstallHook();
+            }
+        }
+
+        /// <summary>
+        /// 自检重装钩子。Windows 会在回调超时后静默摘掉低级钩子，而程序侧看不出任何异常
+        /// （_hook 句柄仍非零），用户看到的是"时灵时不灵"。定期在空闲时重装一次可以把这类
+        /// 失效自愈掉。
+        ///
+        /// 两个约束：
+        ///   1. 只在没有暂扣事件时做，免得把正在识别的序列打断；
+        ///   2. 必须先摘后装——两个钩子同时存在会让每个按键被处理两次。
+        /// 摘到装上之间只有几微秒，这段时间里按键会原样通过，可以接受。
+        /// </summary>
+        private void ReinstallHook()
+        {
+            IntPtr old = _hook;
+            if (old != IntPtr.Zero) Native.UnhookWindowsHookEx(old);
+
+            IntPtr fresh = Native.SetWindowsHookEx(Native.WH_KEYBOARD_LL, _hookProc,
+                Native.GetModuleHandle(null), 0);
+            if (fresh == IntPtr.Zero)
+            {
+                // 重装失败就真的没有钩子了，缩短重试间隔
+                _hook = IntPtr.Zero;
+                _hookAlive = false;
+                _nextReinstallAt = _clock.ElapsedMilliseconds + HookReinstallRetryMs;
+                Log("钩子自检重装失败，错误码 " + Marshal.GetLastWin32Error() + "，稍后重试");
+                return;
+            }
+
+            _hook = fresh;
+            _hookAlive = true;
+            _nextReinstallAt = _clock.ElapsedMilliseconds + HookReinstallIntervalMs;
+            Log("钩子已自检重装");
         }
 
         // ==================== 钩子回调 ====================
@@ -167,7 +338,7 @@ namespace OneKeyTool
             }
         }
 
-        /// <summary>由后台线程周期性调用，处理“等待超时”的收尾。</summary>
+        /// <summary>推进时间，处理“等待超时”的收尾。由钩子线程的定时器调用。</summary>
         public void Tick()
         {
             lock (_gate)

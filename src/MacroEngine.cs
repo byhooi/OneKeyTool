@@ -73,6 +73,12 @@ namespace OneKeyTool
         /// <summary>宏字符数上限：真正的宏里特征串出现在第 8~15 个字符。</summary>
         internal const int MaxMacroChars = 20;
 
+        /// <summary>
+        /// 命中后，等待被丢弃序列里"按下但未抬起"的键补发抬起事件的时长（毫秒）。
+        /// 实测固件在回车之后还会补一个 Enter↑，见 Confirm()。
+        /// </summary>
+        internal const int DanglingUpWaitMs = 500;
+
         private readonly Action<string> _log;
         private Config _cfg;
         private ushort[] _sig;
@@ -81,6 +87,13 @@ namespace OneKeyTool
         private readonly List<KeyEvent> _held = new List<KeyEvent>();
         private readonly List<KeyEvent> _replay = new List<KeyEvent>();
         private readonly HashSet<ushort> _pressed = new HashSet<ushort>();
+
+        /// <summary>
+        /// 命中时被丢弃、但尚未见到抬起事件的键。它们的抬起事件要一并吞掉，
+        /// 否则系统会收到一个没有对应按下的 KEYUP。
+        /// </summary>
+        private readonly HashSet<ushort> _dangling = new HashSet<ushort>();
+        private long _danglingDeadline;
 
         private long _now;
         private long _deadline;
@@ -118,6 +131,7 @@ namespace OneKeyTool
         {
             EngineResult r = new EngineResult();
             r.Decision = KeyDecision.Pass;
+            _dangling.Clear();
             Abort(reason);
             r.HasReplay = _replay.Count > 0;
             return r;
@@ -184,6 +198,15 @@ namespace OneKeyTool
             switch (_state)
             {
                 case State.Idle:
+                    // 命中后固件补发的抬起事件：吞掉，避免系统收到孤立的 KEYUP。
+                    // 只吞"被丢弃序列里确实按下过、且还没见抬起"的键，并带过期时间，
+                    // 因此不会误伤用户自己的按键。两种模式下这里的行为完全一致。
+                    if (_dangling.Count > 0)
+                    {
+                        if (_now > _danglingDeadline) _dangling.Clear();
+                        else if (!ev.IsDown && _dangling.Remove(ev.Vk)) return KeyDecision.Swallow;
+                    }
+
                     // 观察模式下即使不拦 Win 键也要识别，否则没法用它验证识别是否准确
                     if (isWin && ev.IsDown && (_cfg.SuppressWindowsKey || _cfg.DryRun))
                     {
@@ -301,7 +324,7 @@ namespace OneKeyTool
                 // 命中条件：前缀正确 + 见过特征串 + 按下回车
                 if (ev.Vk == VK_ENTER && _sigSeen && _prefixPos == 4)
                 {
-                    Confirm();
+                    Confirm(ev);
                     return KeyDecision.Swallow;
                 }
             }
@@ -331,13 +354,27 @@ namespace OneKeyTool
 
         // ==================== 收尾 ====================
 
-        private void Confirm()
+        /// <summary>确认命中：丢弃整段宏，并记下还没有抬起事件的键。</summary>
+        private void Confirm(KeyEvent trigger)
         {
             _triggeredThisEvent = true;
             _triggerHeldCount = _held.Count;
 
             if (_log != null)
                 _log("命中自定义键：暂扣 " + _held.Count + " 个事件，耗时 " + (_now - _macroStartedAt) + " ms");
+
+            // 被丢弃的序列里可能有"按下但还没抬起"的键——触发它的那个回车就不在 _held 里，
+            // 实测固件在回车之后还会补发一个 Enter↑。把它们记下来，稍后连抬起事件一起吞掉，
+            // 否则系统会收到一个没有对应按下的 KEYUP。
+            _dangling.Clear();
+            for (int i = 0; i < _held.Count; i++)
+            {
+                if (_held[i].IsDown) _dangling.Add(_held[i].Vk);
+                else _dangling.Remove(_held[i].Vk);
+            }
+            if (trigger.IsDown) _dangling.Add(trigger.Vk);
+            else _dangling.Remove(trigger.Vk);
+            _danglingDeadline = _now + DanglingUpWaitMs;
 
             _held.Clear();
             _state = State.Idle;

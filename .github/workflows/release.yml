@@ -2,12 +2,16 @@ name: Build and Release
 
 # 触发方式：
 #   1) 推送形如 v1.0.0 的 tag  → 自动编译、打包、发布 Release
-#   2) 在 Actions 页面手动触发（workflow_dispatch）→ 只产出构建物，不发布
+#   2) 推送到 main / 提 PR     → 只编译并跑状态机测试，不发布（保证主干随时是绿的）
+#   3) 在 Actions 页面手动触发（workflow_dispatch）→ 只产出构建物，不发布
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -33,6 +37,34 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "版本号: $v"
 
+      - name: 校验「不含网络代码」这条承诺
+        shell: pwsh
+        run: |
+          # README 把"完全不联网"写成了对用户的承诺，这里把它变成机器保证：
+          # src/ 里一旦出现网络相关类型，构建直接失败。
+          $hits = Select-String -Path src\*.cs -CaseSensitive `
+                    -Pattern 'System\.Net|WebClient|HttpWebRequest|ServicePointManager'
+          if ($hits) {
+            $hits | ForEach-Object { Write-Host $_.ToString() }
+            throw "src/ 中出现了网络相关代码。本程序承诺不联网，请勿引入。"
+          }
+          Write-Host "OK：src/ 中没有网络代码"
+
+      - name: 校验 BuildInfo 字段与 build.ps1 模板同步
+        shell: pwsh
+        run: |
+          # src\BuildInfo.cs 是手工编译的兜底值，正式构建用 build.ps1 里的同名模板覆盖。
+          # 两边字段一旦不同步，正式构建会以 CS0117 失败（且只有发版时才暴露）。
+          $pattern = 'public const string (\w+)'
+          $fromSrc = [regex]::Matches((Get-Content src\BuildInfo.cs -Raw -Encoding UTF8), $pattern) |
+                     ForEach-Object { $_.Groups[1].Value } | Sort-Object
+          $fromScript = [regex]::Matches((Get-Content build.ps1 -Raw -Encoding UTF8), $pattern) |
+                        ForEach-Object { $_.Groups[1].Value } | Sort-Object
+          if (($fromSrc -join ',') -ne ($fromScript -join ',')) {
+            throw "BuildInfo 字段不一致：src=[$($fromSrc -join ', ')] build.ps1=[$($fromScript -join ', ')]"
+          }
+          Write-Host "OK：BuildInfo 字段一致（$($fromSrc -join ', ')）"
+
       - name: 使用统一构建脚本编译
         shell: pwsh
         env:
@@ -40,6 +72,8 @@ jobs:
         run: .\build.ps1 -Version $env:BUILD_VERSION
 
       - name: 上传构建物
+        # 只有 tag 与手动触发才留构建物；main/PR 的流水线只为跑测试
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: OneKeyTool-${{ steps.ver.outputs.version }}

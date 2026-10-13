@@ -59,12 +59,17 @@ namespace OneKeyTool.Tests
         private const ushort R = 0x52;
         private const ushort H = 0x48;
         private const ushort T = 0x54;
+        private const ushort P = 0x50;
         private const ushort U = 0x55;
         private const ushort N = 0x4E;
         private const ushort A = 0x41;
         private const ushort E = 0x45;
         private const ushort LEFT = 0x25;
         private const ushort ENTER = 0x0D;
+        private const ushort LSHIFT = 0xA0;
+        private const ushort OEM_SEMICOLON = 0xBA;   // ;: 键，加 Shift 才是冒号
+        private const ushort OEM_SLASH = 0xBF;       // /? 键
+        private const ushort OEM_PERIOD = 0xBE;      // . 键
 
         private static int _assertions;
         private static int _failures;
@@ -87,18 +92,54 @@ namespace OneKeyTool.Tests
         // ==================== 序列构造 ====================
 
         /// <summary>
-        /// 真实固件序列（见 Detector 注释、tools/MacroTest/MacroTest.cs 与 README）：
-        ///   Win↓ R↓ Win↑ R↑  h t t p : / / oneclick.lenovo.com.cn  Enter
+        /// 真实固件序列，逐键码照抄 tools/MacroTest/MacroTest.cs 的 ReplayOnce()：
+        ///   Win↓ R↓ Win↑ R↑  h t t p  Shift+:  / /  oneclick  .lenovo .com .cn  [1.1s] Enter↓ Enter↑
+        ///
+        /// 标点要按真实键码来：固件发的是 Shift + OEM 分号键(0xBA)、OEM 斜杠键(0xBF)、
+        /// OEM 句点键(0xBE)，不是 VK 0x3A / 0x2F / 0x2E。状态机不关心这几个键，
+        /// 但用例只有复现真实波形才算验证了真实输入。
         /// </summary>
-        private static Recorder RealFirmwareMacro()
+        private static Recorder RealFirmwareMacro() { return RealFirmwareMacro(true); }
+
+        private static Recorder RealFirmwareMacro(bool trailingEnterUp)
         {
             Recorder r = new Recorder();
+
+            // Win↓ R↓ Win↑ R↑（实测固件把 R↓ 发在 Win↑ 之前）
             r.Down(LWIN, true);
             r.Down(R);
             r.Up(LWIN, true);
             r.Up(R);
-            r.Text("HTTP://ONECLICK.LENOVO.COM.CN");
+            r.Gap(80);
+
+            // "http"
+            r.Tap(H);
+            r.Tap(T);
+            r.Tap(T);
+            r.Tap(P);
+
+            // ":"
+            r.Down(LSHIFT);
+            r.Tap(OEM_SEMICOLON);
+            r.Up(LSHIFT);
+
+            // "//"
+            r.Tap(OEM_SLASH);
+            r.Tap(OEM_SLASH);
+
+            // "oneclick"——特征串
+            string sig = "ONECLICK";
+            for (int i = 0; i < sig.Length; i++) r.Tap(sig[i]);
+
+            // ".lenovo.com.cn"
+            string rest = ".LENOVO.COM.CN";
+            for (int i = 0; i < rest.Length; i++)
+                r.Tap(rest[i] == '.' ? OEM_PERIOD : (ushort)rest[i]);
+
+            // 约 1.1 秒后回车：按下、抬起都发
+            r.Gap(1100);
             r.Down(ENTER);
+            if (trailingEnterUp) r.Up(ENTER);
             return r;
         }
 
@@ -416,6 +457,46 @@ namespace OneKeyTool.Tests
             return PlayFresh(r, true, true).ReplayedForTest == 0;
         }
 
+        /// <summary>
+        /// 命中后固件还会补一个 Enter↑。它必须被吞掉，否则系统会收到一个
+        /// 没有对应按下的 KEYUP；而紧接着的无关按键抬起不能被误吞。
+        /// 超过等待窗口后也要停止吞，免得把用户自己的回车抬起吃掉。
+        /// </summary>
+        private static void TestTrailingKeyUpAfterTrigger()
+        {
+            foreach (bool dryRun in new bool[] { false, true })
+            {
+                Config cfg;
+                Detector d = NewDetector(dryRun, out cfg);
+
+                Recorder r = RealFirmwareMacro(false);   // 不含尾部抬起
+                Play(d, r, false);
+                Assert(d.TriggerCount == 1, "dryRun=" + dryRun + " 应识别");
+
+                long t = r.T + 1;
+                bool swallowed = d.FeedForTest(new Step(ENTER, false, t).ToEvent(), t);
+                Assert(swallowed == !dryRun,
+                    "dryRun=" + dryRun + " 尾部 Enter↑ 应" + (!dryRun ? "吞掉" : "放行") +
+                    "（实际" + (swallowed ? "吞掉" : "放行") + "）");
+
+                bool stray = d.FeedForTest(new Step(A, false, t + 1).ToEvent(), t + 1);
+                Assert(!stray, "dryRun=" + dryRun + " 无关按键的抬起不应被吞");
+                Assert(d.ReplayedForTest == 0, "dryRun=" + dryRun + " 不应产生重放");
+            }
+
+            // 过了等待窗口就不该再吞，否则会永久吞掉用户自己的回车抬起
+            {
+                Config cfg;
+                Detector d = NewDetector(false, out cfg);
+                Recorder r = RealFirmwareMacro(false);
+                Play(d, r, false);
+
+                long late = r.T + MacroEngine.DanglingUpWaitMs + 100;
+                Assert(!d.FeedForTest(new Step(ENTER, false, late).ToEvent(), late),
+                    "超过等待窗口后不应再吞抬起事件");
+            }
+        }
+
         // ==================== 入口 ====================
 
         public static int Main()
@@ -423,6 +504,7 @@ namespace OneKeyTool.Tests
             Console.WriteLine("状态机回归测试");
 
             Run("完整宏（两种模式）", TestFullMacroInBothModes);
+            Run("命中后尾部抬起事件", TestTrailingKeyUpAfterTrigger);
             Run("只发 R↑ 的固件变体", TestRUpOnlyVariant);
             Run("Win+E 立即恢复", TestWinShortcutReplay);
             Run("单独按 Win 超时恢复", TestSingleWinTimeoutReplay);

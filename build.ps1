@@ -1,14 +1,14 @@
-﻿# build.ps1 — 本地一键编译并打包
+﻿# build.ps1 — 本地一键编译并产出发布文件
 #
 # 用法：
-#   .\build.ps1                 编译并打包，版本号取 v0.0.0-dev
+#   .\build.ps1                 编译，版本号取 v0.0.0-dev
 #   .\build.ps1 -Version v1.0.0 指定版本号
 #
-# 产物：dist\OneKeyTool-<版本>-win-x64.zip
+# 产物：dist\OneKeyTool-<版本>-win-x64.exe（上传到 Release 的唯一文件）
 #
 # 说明：本脚本与 GitHub Actions 的构建步骤等价，用于本地验证。
 #       -Version 是版本号的唯一来源：它会写进 exe 的文件属性、
-#       设置窗口标题与托盘提示，同时也用于 zip 与目录命名。
+#       设置窗口标题与托盘提示，同时也用于发布文件名。
 
 param(
     [string]$Version = 'v0.0.0-dev'
@@ -47,7 +47,7 @@ New-Item -ItemType Directory -Force -Path 'dist\_gen' | Out-Null
 
 # ── 3. 生成版本信息源文件 ──
 # 主程序源码清单里不含 src\BuildInfo.cs：这里用生成版覆盖它，
-# 这样 -Version 一处生效，exe 属性与界面显示不会和 zip 名不一致。
+# 这样 -Version 一处生效，exe 属性与界面显示不会和发布文件名不一致。
 $buildInfo = @"
 // 本文件由 build.ps1 生成，请勿手工修改或提交。
 using System.Reflection;
@@ -67,13 +67,13 @@ namespace OneKeyTool
 "@
 Set-Content -LiteralPath 'dist\_gen\BuildInfo.cs' -Value $buildInfo -Encoding UTF8
 
-# ── 4. 编译主程序 ──
+# ── 4. 编译主程序（步骤 1/3）──
 # 主程序源文件清单只此一处：测试编译复用同一份，避免两处清单漂移。
 $src = @(
     'dist\_gen\BuildInfo.cs',
     'src\Program.cs', 'src\Native.cs', 'src\Config.cs', 'src\InputSender.cs',
     'src\MacroEngine.cs', 'src\Detector.cs', 'src\ActionRunner.cs',
-    'src\AutoStart.cs', 'src\MainForm.cs'
+    'src\AutoStart.cs', 'src\Updater.cs', 'src\MainForm.cs'
 )
 
 Write-Host "`n[1/3] 编译主程序..." -ForegroundColor Yellow
@@ -93,7 +93,7 @@ $cscArgs += $src
 if ($LASTEXITCODE -ne 0) { throw "编译失败（退出码 $LASTEXITCODE）" }
 Write-Host "  OK" -ForegroundColor Green
 
-# ── 4. 编译诊断与辅助工具（仅验证） ──
+# ── 5. 编译诊断与辅助工具（仅验证，步骤 2/3）──
 Write-Host "[2/3] 编译诊断与辅助工具..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path 'dist\_tools' | Out-Null
 & $csc /nologo /platform:x64 /optimize+ /codepage:65001 /utf8output `
@@ -117,20 +117,17 @@ if ($LASTEXITCODE -ne 0) { throw "状态机测试失败" }
 Remove-Item 'dist\_tools' -Recurse -Force
 Write-Host "  OK" -ForegroundColor Green
 
-# ── 5. 打包 ──
-Write-Host "[3/3] 打包..." -ForegroundColor Yellow
-$pkg = "dist\OneKeyTool-$Version"
-if (Test-Path $pkg) { Remove-Item $pkg -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $pkg | Out-Null
-Copy-Item 'dist\OneKeyTool.exe' $pkg
-Copy-Item 'config.ini'          $pkg
-Copy-Item 'README.md'           $pkg
-if (Test-Path 'LICENSE') { Copy-Item 'LICENSE' $pkg }
+# ── 6. 产出发布用的 exe（步骤 3/3）──
+# Release 只挂这一个文件：用户下载后双击即可运行，首次启动会自动生成 config.ini。
+# 自动更新也从这里取：程序用 GitHub API 返回的 asset.digest 校验下载，
+# 因此不需要额外上传校验清单。
+Write-Host "[3/3] 生成发布文件..." -ForegroundColor Yellow
+$publishExe = "dist\OneKeyTool-$Version-win-x64.exe"
+Copy-Item 'dist\OneKeyTool.exe' $publishExe -Force
 
-$zip = "dist\OneKeyTool-$Version-win-x64.zip"
-Compress-Archive -Path "$pkg\*" -DestinationPath $zip -Force
+$hash = (Get-FileHash $publishExe -Algorithm SHA256).Hash.ToLowerInvariant()
 
 Write-Host "`n=== 构建完成 ===" -ForegroundColor Cyan
-Write-Host "产物: $zip（$([math]::Round((Get-Item $zip).Length/1KB,1)) KB）" -ForegroundColor Green
-Write-Host "`n包内文件："
-Get-ChildItem $pkg | Select-Object Name, @{n='大小';e={"{0:N0} B" -f $_.Length}} | Format-Table -AutoSize
+Write-Host "发布文件: $publishExe（$([math]::Round((Get-Item $publishExe).Length/1KB,1)) KB）" -ForegroundColor Green
+Write-Host "SHA256:   $hash"
+Write-Host "`n把这个 exe 上传到 Release 即可（GitHub 会自动计算 digest 供程序校验）。"

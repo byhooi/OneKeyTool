@@ -33,7 +33,7 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "版本号: $v"
 
-      - name: 使用统一构建脚本编译并打包
+      - name: 使用统一构建脚本编译
         shell: pwsh
         env:
           BUILD_VERSION: ${{ steps.ver.outputs.version }}
@@ -43,7 +43,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OneKeyTool-${{ steps.ver.outputs.version }}
-          path: dist/*.zip
+          # 只传带版本号的发布 exe。注意别写成 dist/*.exe ——
+          # 那会连未加版本号的中间产物 dist\OneKeyTool.exe 一起传上去。
+          path: dist/*-win-x64.exe
           if-no-files-found: error
 
       - name: 发布 Release
@@ -52,15 +54,20 @@ jobs:
         with:
           # 不设 name 时会直接用 tag 名（v1.1.0）当标题，这里加上项目名
           name: OneKeyTool ${{ steps.ver.outputs.version }}
-          files: dist/*.zip
+          files: dist/*-win-x64.exe
           generate_release_notes: true
           draft: false
           body: |
             ## 下载
 
-            下载下方的 `OneKeyTool-${{ steps.ver.outputs.version }}-win-x64.zip`，
-            **解压到任意文件夹**（建议放在文档或桌面，不要放 Program Files），
-            双击 `OneKeyTool.exe` 即可使用，**无需安装**。
+            下载下方的 `OneKeyTool-${{ steps.ver.outputs.version }}-win-x64.exe`，
+            **放到任意文件夹**（建议放文档或桌面，不要放 Program Files），
+            双击即可使用，**无需安装**。
+
+            首次启动会自动在同目录生成 `config.ini`，之后改配置就改它。
+
+            **已有旧版本？** 不用手动下载：程序启动后会自动检查更新，
+            点设置窗口右上角的版本号即可下载并替换。
 
             ## 环境要求
 
@@ -73,12 +80,12 @@ jobs:
             按几次键盘上那个自定义键，确认界面上"已触发"计数正常增加后，
             在设置窗口里**取消勾选"观察模式"**并点"保存并应用"，即可正式生效。
 
-            ## 本次更新
+            ## 关于自动更新
 
-            - 新增**开机自动启动**：设置窗口勾选即可，写入当前用户注册表，
-              无需管理员权限；取消勾选立即移除。程序被移动后自启路径会自动更新。
-            - 修复设置窗口中"同时拦截 Win 键""观察模式"两个选项被界面裁掉、
-              无法点击的问题。
-            - 删除配置文件后重新生成时，默认值现与随包配置一致（均为观察模式）。
+            程序会在启动后向 GitHub 查询一次是否有新版本（**只读请求，不上传任何数据**）。
+            发现新版本时，设置窗口右上角的版本号会变成可点的链接，点击即可下载并替换。
 
-            详见包内的 `README.md`。
+            下载的 exe 会用 GitHub 为该文件计算的 SHA256 校验（取自 Release API 的
+            `digest` 字段），哈希不符则拒绝安装。也可以完全不用自动更新，手动下载覆盖即可。
+
+            详见仓库的 `README.md`。

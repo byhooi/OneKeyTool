@@ -7,6 +7,8 @@
 # 产物：dist\OneKeyTool-<版本>-win-x64.zip
 #
 # 说明：本脚本与 GitHub Actions 的构建步骤等价，用于本地验证。
+#       -Version 是版本号的唯一来源：它会写进 exe 的文件属性、
+#       设置窗口标题与托盘提示，同时也用于 zip 与目录命名。
 
 param(
     [string]$Version = 'v0.0.0-dev'
@@ -15,8 +17,20 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 
+# 版本号只允许字母、数字、点、连字符和加号，避免拼进 C# 字符串字面量时被破坏
+if ($Version -notmatch '^[A-Za-z0-9.\-+]+$') {
+    throw "版本号含非法字符: $Version（只允许字母、数字、. - +）"
+}
+
+# 文件属性需要四段数字版本（如 1.2.3.4）。tag 形如 v1.2.3 时取其数字部分，
+# 非数字部分（如 -dev）与缺失的段补 0。
+$numeric = ($Version -replace '^[vV]', '') -replace '[^0-9.].*$', ''
+$parts = @($numeric -split '\.' | Where-Object { $_ -ne '' })
+while ($parts.Count -lt 4) { $parts += '0' }
+$fileVersion = ($parts[0..3] -join '.')
+
 Write-Host "=== OneKeyTool 本地构建 ===" -ForegroundColor Cyan
-Write-Host "版本: $Version"
+Write-Host "版本: $Version（文件版本 $fileVersion）"
 
 # ── 1. 找编译器 ──
 $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
@@ -28,10 +42,35 @@ Write-Host "编译器: $csc"
 New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
 if (Test-Path 'dist\OneKeyTool.exe') { Remove-Item 'dist\OneKeyTool.exe' -Force }
 if (Test-Path 'dist\_tools') { Remove-Item 'dist\_tools' -Recurse -Force }
+if (Test-Path 'dist\_gen') { Remove-Item 'dist\_gen' -Recurse -Force }
+New-Item -ItemType Directory -Force -Path 'dist\_gen' | Out-Null
 
-# ── 3. 编译主程序 ──
+# ── 3. 生成版本信息源文件 ──
+# 主程序源码清单里不含 src\BuildInfo.cs：这里用生成版覆盖它，
+# 这样 -Version 一处生效，exe 属性与界面显示不会和 zip 名不一致。
+$buildInfo = @"
+// 本文件由 build.ps1 生成，请勿手工修改或提交。
+using System.Reflection;
+
+[assembly: AssemblyVersion("$fileVersion")]
+[assembly: AssemblyFileVersion("$fileVersion")]
+[assembly: AssemblyInformationalVersion("$Version")]
+
+namespace OneKeyTool
+{
+    internal static class BuildInfo
+    {
+        public const string Version = "$Version";
+        public const string DisplayName = "键盘自定义键工具 " + Version;
+    }
+}
+"@
+Set-Content -LiteralPath 'dist\_gen\BuildInfo.cs' -Value $buildInfo -Encoding UTF8
+
+# ── 4. 编译主程序 ──
 # 主程序源文件清单只此一处：测试编译复用同一份，避免两处清单漂移。
 $src = @(
+    'dist\_gen\BuildInfo.cs',
     'src\Program.cs', 'src\Native.cs', 'src\Config.cs', 'src\InputSender.cs',
     'src\MacroEngine.cs', 'src\Detector.cs', 'src\ActionRunner.cs',
     'src\AutoStart.cs', 'src\MainForm.cs'
@@ -40,7 +79,6 @@ $src = @(
 Write-Host "`n[1/3] 编译主程序..." -ForegroundColor Yellow
 foreach ($f in $src) { if (-not (Test-Path $f)) { throw "缺少源文件: $f" } }
 
-New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
 $cscArgs = @(
     '/nologo', '/target:winexe', '/platform:x64', '/optimize+',
     '/codepage:65001', '/utf8output', '/out:dist\OneKeyTool.exe',

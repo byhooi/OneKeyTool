@@ -85,7 +85,7 @@ namespace OneKeyTool
 
         private void BuildUi()
         {
-            Text = "键盘自定义键工具";
+            Text = BuildInfo.DisplayName;
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
@@ -229,8 +229,17 @@ namespace OneKeyTool
             btnOpenCfg.Click += OnOpenConfig;
             Controls.Add(btnOpenCfg);
 
+            // 版本号单独占一行，避免挤在按钮右侧被截断。
+            // 反馈问题时用户可以直接报出这一行，与 zip 文件名、exe 属性一致。
+            Label lblVersion = new Label();
+            lblVersion.Text = BuildInfo.Version;
+            lblVersion.Location = new Point(16, y + 36);
+            lblVersion.AutoSize = true;
+            lblVersion.ForeColor = Color.Gray;
+            Controls.Add(lblVersion);
+
             // 高度按内容算，避免以后加控件又被裁掉
-            ClientSize = new Size(530, y + 30 + 16);
+            ClientSize = new Size(530, y + 30 + 16 + 20);
 
             BuildTray();
 
@@ -256,7 +265,8 @@ namespace OneKeyTool
         {
             _tray = new NotifyIcon();
             _tray.Icon = _trayIcon;
-            _tray.Text = "键盘自定义键工具";
+            // NotifyIcon.Text 上限 63 字符，超出会抛异常；版本号很短，这里安全
+            _tray.Text = BuildInfo.DisplayName;
             _tray.Visible = true;
 
             ContextMenuStrip menu = new ContextMenuStrip();

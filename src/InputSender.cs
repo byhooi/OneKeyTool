@@ -3,6 +3,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.ComponentModel;
 
 namespace OneKeyTool
 {
@@ -17,17 +19,7 @@ namespace OneKeyTool
         /// <summary>按下或抬起一个虚拟键。extended 表示是否为扩展键（如方向键、Win 键）。</summary>
         public static void Key(ushort vk, bool isDown, bool extended)
         {
-            var inp = new Native.INPUT[1];
-            inp[0].type = Native.INPUT_KEYBOARD;
-            inp[0].U.ki.wVk = vk;
-            inp[0].U.ki.wScan = (ushort)Native.MapVirtualKey(vk, Native.MAPVK_VK_TO_VSC);
-            uint flags = 0;
-            if (extended) flags |= Native.KEYEVENTF_EXTENDEDKEY;
-            if (!isDown) flags |= Native.KEYEVENTF_KEYUP;
-            inp[0].U.ki.dwFlags = flags;
-            inp[0].U.ki.time = 0;
-            inp[0].U.ki.dwExtraInfo = Magic;
-            Native.SendInput(1, inp, System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.INPUT)));
+            Send(new Native.INPUT[] { CreateVirtualKey(vk, isDown, extended) });
         }
 
         /// <summary>完整敲击一个键（按下再抬起）。</summary>
@@ -40,20 +32,61 @@ namespace OneKeyTool
         /// <summary>按顺序重放一批被暂扣的按键事件，保持原始按下/抬起顺序。</summary>
         public static void Replay(List<KeyEvent> events)
         {
+            Native.INPUT[] inputs = new Native.INPUT[events.Count];
             for (int i = 0; i < events.Count; i++)
             {
                 KeyEvent e = events[i];
-                Key(e.Vk, e.IsDown, e.IsExtended);
+                inputs[i] = e.Scan == 0
+                    ? CreateVirtualKey(e.Vk, e.IsDown, e.IsExtended)
+                    : CreateScanCode(e.Scan, e.IsDown, e.IsExtended);
             }
+            Send(inputs);
         }
 
         /// <summary>按住修饰键，敲击主键，再松开修饰键。</summary>
         public static void Chord(ushort[] modifiers, ushort key, bool keyExtended)
         {
-            for (int i = 0; i < modifiers.Length; i++) Key(modifiers[i], true, IsExtendedVk(modifiers[i]));
-            Key(key, true, keyExtended);
-            Key(key, false, keyExtended);
-            for (int i = modifiers.Length - 1; i >= 0; i--) Key(modifiers[i], false, IsExtendedVk(modifiers[i]));
+            List<Native.INPUT> inputs = new List<Native.INPUT>();
+            for (int i = 0; i < modifiers.Length; i++) inputs.Add(CreateVirtualKey(modifiers[i], true, IsExtendedVk(modifiers[i])));
+            inputs.Add(CreateVirtualKey(key, true, keyExtended));
+            inputs.Add(CreateVirtualKey(key, false, keyExtended));
+            for (int i = modifiers.Length - 1; i >= 0; i--) inputs.Add(CreateVirtualKey(modifiers[i], false, IsExtendedVk(modifiers[i])));
+            Send(inputs.ToArray());
+        }
+
+        private static Native.INPUT CreateVirtualKey(ushort vk, bool isDown, bool extended)
+        {
+            Native.INPUT input = new Native.INPUT();
+            input.type = Native.INPUT_KEYBOARD;
+            input.U.ki.wVk = vk;
+            input.U.ki.wScan = (ushort)Native.MapVirtualKey(vk, Native.MAPVK_VK_TO_VSC);
+            input.U.ki.dwFlags = (extended ? Native.KEYEVENTF_EXTENDEDKEY : 0) |
+                (isDown ? 0 : Native.KEYEVENTF_KEYUP);
+            input.U.ki.dwExtraInfo = Magic;
+            return input;
+        }
+
+        private static Native.INPUT CreateScanCode(ushort scan, bool isDown, bool extended)
+        {
+            Native.INPUT input = new Native.INPUT();
+            input.type = Native.INPUT_KEYBOARD;
+            input.U.ki.wScan = scan;
+            input.U.ki.dwFlags = Native.KEYEVENTF_SCANCODE |
+                (extended ? Native.KEYEVENTF_EXTENDEDKEY : 0) |
+                (isDown ? 0 : Native.KEYEVENTF_KEYUP);
+            input.U.ki.dwExtraInfo = Magic;
+            return input;
+        }
+
+        private static void Send(Native.INPUT[] inputs)
+        {
+            if (inputs.Length == 0) return;
+            uint sent = Native.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(Native.INPUT)));
+            if (sent != inputs.Length)
+            {
+                int error = Marshal.GetLastWin32Error();
+                throw new Win32Exception(error, "SendInput 仅注入了 " + sent + "/" + inputs.Length + " 个按键事件（可能受 UIPI 权限限制）");
+            }
         }
 
         public static bool IsExtendedVk(ushort vk)
@@ -74,7 +107,6 @@ namespace OneKeyTool
                 case 0x2E: // Delete
                 case 0x90: // NumLock
                 case 0x6F: // Numpad /
-                case 0x0D: // Enter(小键盘)
                     return true;
                 default:
                     return false;

@@ -33,82 +33,11 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "版本号: $v"
 
-      - name: 编译 OneKeyTool.exe
+      - name: 使用统一构建脚本编译并打包
         shell: pwsh
-        run: |
-          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          if (-not (Test-Path $csc)) {
-            $csc = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
-          }
-          if (-not (Test-Path $csc)) { throw "找不到 C# 编译器 csc.exe" }
-          Write-Host "使用编译器: $csc"
-
-          $src = @(
-            'src\Program.cs', 'src\Native.cs', 'src\Config.cs', 'src\InputSender.cs',
-            'src\Detector.cs', 'src\ActionRunner.cs', 'src\AutoStart.cs', 'src\MainForm.cs'
-          )
-          foreach ($f in $src) {
-            if (-not (Test-Path $f)) { throw "缺少源文件: $f" }
-          }
-
-          New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
-
-          $args = @(
-            '/nologo', '/target:winexe', '/platform:x64', '/optimize+',
-            '/codepage:65001', '/utf8output',
-            "/out:dist\OneKeyTool.exe",
-            '/reference:System.dll', '/reference:System.Drawing.dll',
-            '/reference:System.Windows.Forms.dll'
-          )
-          if (Test-Path 'src\app.ico') {
-            $args += '/win32icon:src\app.ico'
-          }
-          $args += $src
-
-          & $csc @args
-          if ($LASTEXITCODE -ne 0) { throw "编译失败，退出码 $LASTEXITCODE" }
-          Write-Host "编译成功"
-
-      - name: 编译诊断与辅助工具（仅验证可编译，不随包发布）
-        shell: pwsh
-        run: |
-          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          New-Item -ItemType Directory -Force -Path 'dist\tools' | Out-Null
-          foreach ($t in @(
-            @{ name='KeySpy';       file='tools\KeySpy\KeySpy.cs';             ref=@() },
-            @{ name='MacroTest';    file='tools\MacroTest\MacroTest.cs';       ref=@() },
-            @{ name='GenerateIcon'; file='tools\GenerateIcon\GenerateIcon.cs'; ref=@('/reference:System.Drawing.dll') }
-          )) {
-            & $csc /nologo /platform:x64 /optimize+ /codepage:65001 /utf8output `
-              @($t.ref) "/out:dist\tools\$($t.name).exe" $t.file
-            if ($LASTEXITCODE -ne 0) { throw "$($t.name) 编译失败" }
-          }
-          Write-Host "诊断工具编译成功"
-          Remove-Item 'dist\tools' -Recurse -Force
-
-      - name: 组装发布目录
-        shell: pwsh
-        run: |
-          $v = "${{ steps.ver.outputs.version }}"
-          $pkg = "dist\OneKeyTool-$v"
-          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
-
-          Copy-Item 'dist\OneKeyTool.exe' $pkg
-          Copy-Item 'config.ini'          $pkg
-          Copy-Item 'README.md'           $pkg
-          Copy-Item 'LICENSE'             $pkg
-
-          Write-Host "打包内容："
-          Get-ChildItem $pkg | Select-Object Name, Length | Format-Table -AutoSize
-
-      - name: 生成 ZIP
-        shell: pwsh
-        run: |
-          $v = "${{ steps.ver.outputs.version }}"
-          $zip = "dist\OneKeyTool-$v-win-x64.zip"
-          Compress-Archive -Path "dist\OneKeyTool-$v\*" -DestinationPath $zip -Force
-          $size = (Get-Item $zip).Length
-          Write-Host "已生成 $zip（$([math]::Round($size/1KB,1)) KB）"
+        env:
+          BUILD_VERSION: ${{ steps.ver.outputs.version }}
+        run: .\build.ps1 -Version $env:BUILD_VERSION
 
       - name: 上传构建物
         uses: actions/upload-artifact@v4

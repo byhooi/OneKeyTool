@@ -43,9 +43,11 @@ namespace OneKeyTool
             }
 
             Config cfg = Config.Load(cfgPath);
+            if (!string.IsNullOrEmpty(Config.LastLoadError))
+                MessageBox.Show("读取配置失败，当前将使用默认值：\n" + Config.LastLoadError,
+                    "配置读取失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
             string logPath = Path.Combine(Path.GetDirectoryName(cfgPath), "onekeytool.log");
-            try { File.Delete(logPath); } catch { }
 
             Detector detector = new Detector(cfg, logPath);
             if (!detector.Start())

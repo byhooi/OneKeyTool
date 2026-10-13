@@ -80,7 +80,7 @@ git push origin v1.0.0
 
 ## 四、发布前检查清单
 
-- [ ] 本地跑过 `.\build.ps1` 且编译无警告
+- [ ] 本地跑过 `.\build.ps1`，且状态机回归用例全部通过（脚本会自动跑，不通过会中断构建）
 - [ ] 实际按过自定义键，确认识别正常、无误报
 - [ ] 设置窗口里所有复选框都可见（改过界面布局时尤其要确认）
 - [ ] `git status` 里没有 `.exe` / `.log` / `dist/` 被误加
@@ -95,7 +95,8 @@ git push origin v1.0.0
 
 点进失败的那次运行，展开红色步骤看报错。常见原因：
 
-- 源文件路径写错 → 检查 `release.yml` 里的 `src/*.cs` 列表是否与实际文件名一致
+- 源文件路径写错 → 检查 `build.ps1` 里的 `$src` 数组是否与实际文件名一致
+- 状态机回归用例失败 → 展开 `使用统一构建脚本编译并打包` 步骤，看是哪条断言
 - 中文乱码 → 脚本里的中文需存为 **UTF-8 with BOM**（本项目的 `build.ps1` 已处理）
 
 ### Q：想改 Release 的说明文字？
@@ -114,26 +115,26 @@ git push origin :refs/tags/v1.0.0
 
 ### Q：本地构建脚本和 CI 的行为一致吗？
 
-一致。`build.ps1` 与 `release.yml` 的编译参数、打包内容完全相同，本地验证过就没问题。
+一致，而且是**同一份脚本**：CI 的构建步骤直接调用 `.\build.ps1 -Version <tag>`，
+不存在两份编译参数或文件清单。本地通过即 CI 通过（编译器版本可能不同，但参数相同）。
 
 ---
 
 ## 六、目录说明
 
 ```
-keyboard/
-├─ .github/workflows/release.yml   ← 自动构建与发布（核心）
+OneKeyTool/
+├─ .github/workflows/release.yml   ← 自动构建与发布（调用 build.ps1）
 ├─ .gitignore                      ← 排除编译产物
-├─ build.ps1                       ← 本地构建（与 CI 等价）
+├─ build.ps1                       ← 构建脚本（本地与 CI 共用，唯一事实来源）
 ├─ config.ini                      ← 默认配置模板（会打进 zip）
 ├─ LICENSE                         ← MIT
 ├─ README.md                       ← 仓库首页展示（会打进 zip）
 ├─ RELEASE.md                      ← 本文件（不会打进 zip）
 ├─ src/                            ← 主程序源码
+├─ tests/                          ← 状态机回归测试（构建时自动运行）
 └─ tools/                          ← 诊断工具源码
 ```
 
-> **注意**：新增 `src/*.cs` 源文件时，要同步更新两处的文件列表，
-> 否则 CI 或本地构建会漏编译：
-> - `build.ps1` 里的 `$src` 数组
-> - `.github/workflows/release.yml` 里 `编译 OneKeyTool.exe` 步骤的 `$src` 数组
+> **注意**：CI 与本地统一调用 `build.ps1`。新增 `src/*.cs` 源文件时，
+> 只需更新该脚本中的 `$src` 数组——测试编译复用同一份清单，不会漏。

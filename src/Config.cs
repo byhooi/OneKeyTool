@@ -17,6 +17,7 @@ namespace OneKeyTool
 
     internal class Config
     {
+        public static string LastLoadError;
         /// <summary>总开关。关掉后本工具完全不干预键盘。</summary>
         public bool Enabled = true;
 
@@ -30,7 +31,7 @@ namespace OneKeyTool
         public bool SuppressWindowsKey = true;
 
         /// <summary>检测到 Win↓ 后，等待 Win↑ 出现的时长（毫秒）。</summary>
-        public int WinWaitMs = 300;
+        public int WinWaitMs = 80;
 
         /// <summary>检测到 Win↑ 后，等待 R↑ 出现的时长（毫秒）。宏里这一跳约 1.2ms，故取小值以免拖慢正常按 Win 键。</summary>
         public int WinUpWaitMs = 80;
@@ -68,12 +69,13 @@ namespace OneKeyTool
 
         public static Config Load(string path)
         {
+            LastLoadError = null;
             Config c = new Config();
             if (!File.Exists(path)) return c;
 
             string[] lines;
             try { lines = File.ReadAllLines(path, Encoding.UTF8); }
-            catch { return c; }
+            catch (Exception ex) { LastLoadError = ex.Message; return c; }
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -115,6 +117,9 @@ namespace OneKeyTool
                     case "debugkeys":
                         c.DebugKeys = ParseBool(val, c.DebugKeys);
                         break;
+                    case "signature":
+                        c.Signature = ParseSignature(val, c.Signature);
+                        break;
                     case "rwaitms":
                         c.RWaitMs = ParseInt(val, c.RWaitMs);
                         break;
@@ -154,6 +159,8 @@ namespace OneKeyTool
             sb.AppendLine();
             sb.AppendLine("# 测试用：是否处理本程序注入的按键（正常运行必须为 false）");
             sb.AppendLine("AcceptInjected=" + (AcceptInjected ? "true" : "false"));
+            sb.AppendLine("DebugKeys=" + (DebugKeys ? "true" : "false"));
+            sb.AppendLine("Signature=" + SignatureToString(Signature));
             sb.AppendLine();
             sb.AppendLine("# 高级时序参数（毫秒），一般无需修改");
             sb.AppendLine("WinWaitMs=" + WinWaitMs.ToString(CultureInfo.InvariantCulture));
@@ -161,7 +168,18 @@ namespace OneKeyTool
             sb.AppendLine("RWaitMs=" + RWaitMs.ToString(CultureInfo.InvariantCulture));
             sb.AppendLine("MacroTimeoutMs=" + MacroTimeoutMs.ToString(CultureInfo.InvariantCulture));
 
-            File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
+            string fullPath = Path.GetFullPath(path);
+            string tempPath = fullPath + ".tmp";
+            File.WriteAllText(tempPath, sb.ToString(), new UTF8Encoding(true));
+            try
+            {
+                if (File.Exists(fullPath)) File.Replace(tempPath, fullPath, null);
+                else File.Move(tempPath, fullPath);
+            }
+            finally
+            {
+                if (File.Exists(tempPath)) File.Delete(tempPath);
+            }
         }
 
         public static string KindToString(ActionKind k)
@@ -201,6 +219,27 @@ namespace OneKeyTool
             if (int.TryParse(s.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out v) && v > 0)
                 return v;
             return fallback;
+        }
+
+        private static ushort[] ParseSignature(string value, ushort[] fallback)
+        {
+            string text = value.Trim().ToUpperInvariant();
+            if (text.Length == 0) return fallback;
+            ushort[] result = new ushort[text.Length];
+            for (int i = 0; i < text.Length; i++)
+            {
+                char ch = text[i];
+                if ((ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9')) return fallback;
+                result[i] = (ushort)ch;
+            }
+            return result;
+        }
+
+        private static string SignatureToString(ushort[] signature)
+        {
+            StringBuilder value = new StringBuilder();
+            for (int i = 0; i < signature.Length; i++) value.Append((char)signature[i]);
+            return value.ToString();
         }
     }
 }

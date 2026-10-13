@@ -76,7 +76,7 @@ h t t p : / / o n e c l i c k . l e n o v o . c o m . c n
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 写入一条自启项，
   取消勾选即删除）
 
-**它怎么保证不误伤**（已用自动化测试逐项验证）：
+**识别与恢复行为**（构建时会运行状态机回归用例）：
 
 | 场景 | 结果 |
 |---|---|
@@ -85,7 +85,8 @@ h t t p : / / o n e c l i c k . l e n o v o . c o m . c n
 | 手动按 Win+R | 按键顺序与宏相反，正确放行 |
 | 正常打字（间隔 60ms 以上） | 时序不符，放行 |
 | 方向键连按 | 不匹配，放行 |
-| 长按 Win 键 | 暂扣达 64 个自动放弃并放行 |
+| 长按 Win 键 | 检测到自动重复后立即放弃并恢复暂扣事件 |
+| 宏收集途中按住某键 | 达到事件上限即放弃并恢复，不会无界暂扣 |
 
 **兜底机制**：万一程序卡死导致键盘异常，用任务管理器结束 `OneKeyTool.exe` 即可，键盘立刻恢复。程序退出后**不留任何痕迹**。
 
@@ -100,7 +101,7 @@ h t t p : / / o n e c l i c k . l e n o v o . c o m . c n
 ```
 看到 Win↓
    ├─ 先"暂扣"不发给系统，开始观察
-   ├─ 300ms 内没有后续          → 判定你自己按 Win，原样放行
+   ├─ 80ms 内没有后续           → 判定你自己按 Win，原样放行
    └─ 出现 R
         ├─ 250ms 内首字符不是 h   → 不是宏（如你手动 Win+R），放行
         └─ 收到 h → 进入宏收集
@@ -109,7 +110,11 @@ h t t p : / / o n e c l i c k . l e n o v o . c o m . c n
              └─ 超时 / 不符        → 放弃拦截，把暂扣的按键原样重放
 ```
 
+**观察模式与拦截模式共用同一个状态机**（`src/MacroEngine.cs`）：观察模式只是不吞事件、不执行动作，识别逻辑完全相同。因此观察模式下验证通过，切到拦截模式后行为必然一致。这条性质由构建时的回归用例保证。
+
 **防递归**：程序注入的按键带 `dwExtraInfo` 魔数标记，钩子无条件忽略，因此"放弃拦截 → 重放"的过程不会自我循环。
+
+**防卡键**：暂扣事件数有硬上限（400），超限或超时都会立即放弃拦截并原样重放；退出、重载配置时也会先把暂扣的按键放行。
 
 ---
 
@@ -124,7 +129,11 @@ h t t p : / / o n e c l i c k . l e n o v o . c o m . c n
 | `ActionValue` | 动作参数 |
 | `DryRun` | 观察模式，`true` 时只识别不拦截 |
 | `SuppressWindowsKey` | 是否连 Win 键一起拦（推荐 `true`，避免闪"运行"对话框） |
-| `WinWaitMs` | 按 Win 后等待时长。觉得开始菜单变慢了就调小（如 `150`） |
+| `WinWaitMs` | 按 Win 后等待时长，默认 `80` 毫秒 |
+| `WinUpWaitMs` / `RWaitMs` | 后续两跳的等待时长，一般无需修改 |
+| `MacroTimeoutMs` | 整个宏序列的最长时长，默认 `4000` 毫秒 |
+| `DebugKeys` | 是否记录原始按键事件，默认关闭 |
+| `Signature` | 宏网址中的识别特征，默认 `ONECLICK`，仅支持英文字母和数字 |
 
 改完点"保存并应用"，或托盘菜单选"重新加载配置"。
 
@@ -159,6 +168,9 @@ h t t p : / / o n e c l i c k . l e n o v o . c o m . c n
 
 产物在 `dist\OneKeyTool-v1.0.0-win-x64.zip`。
 
+构建脚本会顺带编译并运行 `tests/StateMachineTests.cs` 里的状态机回归用例，
+**任何一条不通过都会让构建失败**，因此产物一定是测试通过的版本。
+
 **自动发布**：推送形如 `v1.0.0` 的 tag，GitHub Actions 会自动编译、打包并创建 Release：
 
 ```bash
@@ -171,11 +183,12 @@ git push origin v1.0.0
 ## 项目结构
 
 ```
-keyboard/
+OneKeyTool/
 ├─ src/                       主程序源码（C#，.NET Framework 4.0）
 │   ├─ Program.cs             入口
 │   ├─ MainForm.cs            可视化配置界面 + 托盘
-│   ├─ Detector.cs            识别核心（钩子 + 状态机）
+│   ├─ MacroEngine.cs         识别状态机（纯逻辑，可测试，两种模式共用）
+│   ├─ Detector.cs            键盘钩子安装与事件分发（调用 MacroEngine）
 │   ├─ Config.cs              配置读写
 │   ├─ InputSender.cs         按键注入
 │   ├─ ActionRunner.cs        执行动作
@@ -185,8 +198,9 @@ keyboard/
 │
 ├─ tools/                     诊断与辅助工具
 │   ├─ KeySpy/                按键抓包分析器
-│   ├─ MacroTest/             按键序列回放器（自动化测试）
+│   ├─ MacroTest/             按键序列回放器（需手动运行）
 │   └─ GenerateIcon/          多分辨率应用图标生成器
+├─ tests/                     状态机回归测试（build.ps1 每次构建时运行）
 │
 ├─ config.ini                 默认配置模板
 ├─ build.ps1                  本地构建脚本
@@ -196,7 +210,10 @@ keyboard/
 ### 换键盘后失效了？
 
 用 `tools/KeySpy` 重新抓一次包，看那个键的按键序列是否变了。
-如果序列不同，改 `src/Detector.cs` 里的状态机即可（逻辑都在注释里说明白了）。
+
+- 如果只是网址里的特征词不同（比如换成了别的域名），改 `config.ini` 里的 `Signature` 即可。
+- 如果按键序列整体不同，改 `src/MacroEngine.cs` 里的状态机（逻辑都在注释里说明白了），
+  并在 `tests/StateMachineTests.cs` 里补一条对应用例——构建时会自动跑。
 
 ---
 
@@ -206,7 +223,7 @@ keyboard/
 检查 `config.ini` 里 `SuppressWindowsKey` 是否为 `true`。
 
 **Q：会影响正常按 Win 键吗？**
-会有一个极短的延迟（默认最多 300ms）。觉得慢就把 `WinWaitMs` 改成 `150`。
+会有一个极短的延迟（默认最多 80ms）。可以在 `config.ini` 调整 `WinWaitMs`。
 
 **Q：杀毒软件报毒？**
 低级键盘钩子是按键映射、输入法等工具的常规技术，但确实可能触发启发式告警。本项目完全开源，代码就几行，可以自行审阅或从源码编译。

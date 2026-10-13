@@ -33,8 +33,8 @@ namespace OneKeyTool
         private Icon _appIcon;   // 窗口图标（标题栏 / Alt-Tab）
         private Icon _trayIcon;  // 托盘图标（小尺寸，单独取原生分辨率）
 
-        // 版本号（只读展示，供用户反馈问题时报出）
-        private Label _lblVersion;
+        // 版本号：右上角的可点链接，点开是「关于」对话框
+        private LinkLabel _lnkVersion;
 
         private Config _cfg;
         private Detector _detector;
@@ -104,15 +104,20 @@ namespace OneKeyTool
             _chkEnabled.AutoSize = true;
             Controls.Add(_chkEnabled);
 
-            // 版本号放右上角，与"启用拦截"同一行。反馈问题时用户可直接报出，
-            // 与发布文件名、exe 文件属性一致。
-            _lblVersion = new Label();
-            _lblVersion.Text = BuildInfo.Version;
-            _lblVersion.Size = new Size(120, 20);
-            _lblVersion.Location = new Point(530 - 16 - 120, y);
-            _lblVersion.TextAlign = ContentAlignment.MiddleRight;
-            _lblVersion.ForeColor = Color.Gray;
-            Controls.Add(_lblVersion);
+            // 版本号放右上角，与"启用拦截"同一行。做成可点链接——用户想查版本、
+            // 找项目主页时自然会点它，比在托盘菜单里塞一个「关于」更符合直觉。
+            // 链接色沿用系统默认，鼠标悬停才显下划线，平时不喧宾夺主。
+            _lnkVersion = new LinkLabel();
+            _lnkVersion.Text = BuildInfo.Version;
+            _lnkVersion.Size = new Size(120, 20);
+            _lnkVersion.Location = new Point(530 - 16 - 120, y);
+            _lnkVersion.TextAlign = ContentAlignment.MiddleRight;
+            _lnkVersion.LinkBehavior = LinkBehavior.HoverUnderline;
+            _lnkVersion.LinkColor = Color.FromArgb(0, 102, 204);
+            _lnkVersion.ActiveLinkColor = Color.FromArgb(0, 102, 204);
+            _lnkVersion.VisitedLinkColor = Color.FromArgb(0, 102, 204);
+            _lnkVersion.Click += delegate { ShowAbout(); };
+            Controls.Add(_lnkVersion);
 
             y += 34;
 
@@ -318,9 +323,6 @@ namespace OneKeyTool
                 LoadToUi();
             });
 
-            ToolStripMenuItem miAbout = new ToolStripMenuItem("关于", null,
-                delegate { ShowAbout(); });
-
             ToolStripMenuItem miQuit = new ToolStripMenuItem("退出", null, delegate { Quit(); });
 
             menu.Items.Add(miShow);
@@ -331,7 +333,6 @@ namespace OneKeyTool
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(miReload);
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(miAbout);
             menu.Items.Add(miQuit);
 
             // 弹出前同步勾选状态：窗口里改过、或在任务管理器里禁用过自启，
@@ -443,27 +444,80 @@ namespace OneKeyTool
         // ==================== 关于 ====================
 
         /// <summary>
-        /// 托盘菜单「关于」：显示当前版本，并提供下载页面入口。
-        /// 本程序不联网、不自动更新，升级靠手动下载覆盖。
+        /// 「关于」对话框，点右上角版本号打开。纯展示，只有一个「确定」。
+        /// 下载页入口以链接形式放在框内——想找的人自然能找到，
+        /// 只想看版本号的人也不会被追问"要不要打开浏览器"。
         /// </summary>
         private void ShowAbout()
         {
-            string msg = BuildInfo.DisplayName + "\n\n" +
-                "升级方法：到下面的页面下载新的压缩包，解压后覆盖旧的 exe 即可。\n" +
-                "config.ini 是你的配置，不会被覆盖。\n\n" +
-                "是否现在打开下载页面？";
+            using (Form dlg = new Form())
+            {
+                dlg.Text = "关于 " + BuildInfo.DisplayName;
+                dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dlg.MaximizeBox = false;
+                dlg.MinimizeBox = false;
+                dlg.ShowInTaskbar = false;
+                dlg.StartPosition = FormStartPosition.CenterParent;
+                dlg.ClientSize = new Size(430, 216);
+                dlg.Font = Font;
 
-            if (MessageBox.Show(this, msg, "关于 OneKeyTool",
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
-                return;
+                Label title = new Label();
+                title.Text = BuildInfo.DisplayName;
+                title.Font = new Font(Font.FontFamily, 11F, FontStyle.Bold);
+                title.Location = new Point(20, 18);
+                title.AutoSize = true;
+                dlg.Controls.Add(title);
 
+                Label desc = new Label();
+                desc.Text = "把键盘上那个「一键上网」键，改成你想要的功能。\n" +
+                            "无需安装、不改固件、随时可退。\n" +
+                            "\n" +
+                            "本程序完全离线：不含任何网络代码，不联网、不上报、\n" +
+                            "不自动更新。升级请手动下载新版，覆盖旧的 exe 即可\n" +
+                            "（config.ini 是你的配置，不会被覆盖）。";
+                desc.Location = new Point(22, 50);
+                desc.AutoSize = true;
+                desc.ForeColor = Color.FromArgb(64, 64, 64);
+                dlg.Controls.Add(desc);
+
+                Label license = new Label();
+                license.Text = "许可协议：MIT";
+                license.Location = new Point(22, 150);
+                license.AutoSize = true;
+                dlg.Controls.Add(license);
+
+                LinkLabel home = new LinkLabel();
+                home.Text = "项目主页 / 下载";
+                home.Location = new Point(22, 172);
+                home.AutoSize = true;
+                home.LinkBehavior = LinkBehavior.HoverUnderline;
+                home.Click += delegate { OpenUrl(BuildInfo.ReleasesPage); };
+                dlg.Controls.Add(home);
+
+                Button ok = new Button();
+                ok.Text = "确定";
+                ok.DialogResult = DialogResult.OK;
+                ok.Size = new Size(88, 28);
+                ok.Location = new Point(dlg.ClientSize.Width - ok.Width - 20,
+                                        dlg.ClientSize.Height - ok.Height - 18);
+                dlg.Controls.Add(ok);
+
+                dlg.AcceptButton = ok;
+                dlg.CancelButton = ok;
+                dlg.ShowDialog(this);
+            }
+        }
+
+        /// <summary>用系统默认浏览器打开链接。</summary>
+        private void OpenUrl(string url)
+        {
             try
             {
-                Process.Start(new ProcessStartInfo(BuildInfo.ReleasesPage) { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "打开下载页面失败：" + ex.Message,
+                MessageBox.Show(this, "打开链接失败：" + ex.Message,
                     "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }

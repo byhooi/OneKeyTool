@@ -99,6 +99,17 @@ namespace OneKeyTool
             _chkEnabled.Location = new Point(16, y);
             _chkEnabled.AutoSize = true;
             Controls.Add(_chkEnabled);
+
+            // 版本号放右上角，与"启用拦截"同一行。反馈问题时用户可直接报出，
+            // 与 zip 文件名、exe 文件属性一致。
+            Label lblVersion = new Label();
+            lblVersion.Text = BuildInfo.Version;
+            lblVersion.Size = new Size(120, 20);
+            lblVersion.Location = new Point(530 - 16 - 120, y);
+            lblVersion.TextAlign = ContentAlignment.MiddleRight;
+            lblVersion.ForeColor = Color.Gray;
+            Controls.Add(lblVersion);
+
             y += 34;
 
             GroupBox grp = new GroupBox();
@@ -229,17 +240,8 @@ namespace OneKeyTool
             btnOpenCfg.Click += OnOpenConfig;
             Controls.Add(btnOpenCfg);
 
-            // 版本号单独占一行，避免挤在按钮右侧被截断。
-            // 反馈问题时用户可以直接报出这一行，与 zip 文件名、exe 属性一致。
-            Label lblVersion = new Label();
-            lblVersion.Text = BuildInfo.Version;
-            lblVersion.Location = new Point(16, y + 36);
-            lblVersion.AutoSize = true;
-            lblVersion.ForeColor = Color.Gray;
-            Controls.Add(lblVersion);
-
             // 高度按内容算，避免以后加控件又被裁掉
-            ClientSize = new Size(530, y + 30 + 16 + 20);
+            ClientSize = new Size(530, y + 30 + 16);
 
             BuildTray();
 

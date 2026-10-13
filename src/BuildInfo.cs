@@ -21,5 +21,8 @@ namespace OneKeyTool
 
         /// <summary>界面显示用：产品名 + 版本号。</summary>
         public const string DisplayName = "键盘自定义键工具 " + Version;
+
+        /// <summary>下载页面（托盘「关于」用）。程序本身不联网，仅在你点击时才打开浏览器。</summary>
+        public const string ReleasesPage = "https://github.com/byhooi/OneKeyTool/releases/latest";
     }
 }

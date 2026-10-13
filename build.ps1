@@ -4,7 +4,7 @@
 #   .\build.ps1                 编译，版本号取 v0.0.0-dev
 #   .\build.ps1 -Version v1.0.0 指定版本号
 #
-# 产物：dist\OneKeyTool-<版本>-win-x64.exe（上传到 Release 的唯一文件）
+# 产物：dist\OneKeyTool-<版本>-win-x64.zip（上传到 Release 的唯一文件）
 #
 # 说明：本脚本与 GitHub Actions 的构建步骤等价，用于本地验证。
 #       -Version 是版本号的唯一来源：它会写进 exe 的文件属性、
@@ -62,6 +62,7 @@ namespace OneKeyTool
     {
         public const string Version = "$Version";
         public const string DisplayName = "键盘自定义键工具 " + Version;
+        public const string ReleasesPage = "https://github.com/byhooi/OneKeyTool/releases/latest";
     }
 }
 "@
@@ -73,7 +74,7 @@ $src = @(
     'dist\_gen\BuildInfo.cs',
     'src\Program.cs', 'src\Native.cs', 'src\Config.cs', 'src\InputSender.cs',
     'src\MacroEngine.cs', 'src\Detector.cs', 'src\ActionRunner.cs',
-    'src\AutoStart.cs', 'src\Updater.cs', 'src\MainForm.cs'
+    'src\AutoStart.cs', 'src\MainForm.cs'
 )
 
 Write-Host "`n[1/3] 编译主程序..." -ForegroundColor Yellow
@@ -117,17 +118,24 @@ if ($LASTEXITCODE -ne 0) { throw "状态机测试失败" }
 Remove-Item 'dist\_tools' -Recurse -Force
 Write-Host "  OK" -ForegroundColor Green
 
-# ── 6. 产出发布用的 exe（步骤 3/3）──
-# Release 只挂这一个文件：用户下载后双击即可运行，首次启动会自动生成 config.ini。
-# 自动更新也从这里取：程序用 GitHub API 返回的 asset.digest 校验下载，
-# 因此不需要额外上传校验清单。
-Write-Host "[3/3] 生成发布文件..." -ForegroundColor Yellow
-$publishExe = "dist\OneKeyTool-$Version-win-x64.exe"
-Copy-Item 'dist\OneKeyTool.exe' $publishExe -Force
+# ── 6. 打包（步骤 3/3）──
+# Release 只挂这一个 zip：解压即用，无需安装。
+# 用 zip 而非裸 exe 分发：浏览器与 SmartScreen 对压缩包不做「未知发布者」拦截，
+# 用户拿到的是「下载 → 解压 → 双击」的常规流程，不会被安全提示打断。
+Write-Host "[3/3] 打包..." -ForegroundColor Yellow
+$pkg = "dist\OneKeyTool-$Version"
+if (Test-Path $pkg) { Remove-Item $pkg -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+Copy-Item 'dist\OneKeyTool.exe' $pkg
+Copy-Item 'config.ini'          $pkg
+Copy-Item 'README.md'           $pkg
+if (Test-Path 'LICENSE') { Copy-Item 'LICENSE' $pkg }
 
-$hash = (Get-FileHash $publishExe -Algorithm SHA256).Hash.ToLowerInvariant()
+$zip = "dist\OneKeyTool-$Version-win-x64.zip"
+Compress-Archive -Path "$pkg\*" -DestinationPath $zip -Force
 
 Write-Host "`n=== 构建完成 ===" -ForegroundColor Cyan
-Write-Host "发布文件: $publishExe（$([math]::Round((Get-Item $publishExe).Length/1KB,1)) KB）" -ForegroundColor Green
-Write-Host "SHA256:   $hash"
-Write-Host "`n把这个 exe 上传到 Release 即可（GitHub 会自动计算 digest 供程序校验）。"
+Write-Host "发布文件: $zip（$([math]::Round((Get-Item $zip).Length/1KB,1)) KB）" -ForegroundColor Green
+Write-Host "`n包内文件："
+Get-ChildItem $pkg | Select-Object Name, @{n='大小';e={"{0:N0} B" -f $_.Length}} | Format-Table -AutoSize
+Write-Host "把这个 zip 上传到 Release 即可。"

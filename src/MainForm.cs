@@ -3,7 +3,6 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
-using System.Threading;
 using System.Windows.Forms;
 
 namespace OneKeyTool
@@ -34,11 +33,8 @@ namespace OneKeyTool
         private Icon _appIcon;   // 窗口图标（标题栏 / Alt-Tab）
         private Icon _trayIcon;  // 托盘图标（小尺寸，单独取原生分辨率）
 
-        // 版本与更新
+        // 版本号（只读展示，供用户反馈问题时报出）
         private Label _lblVersion;
-        private LinkLabel _lnkUpdate;
-        private ReleaseInfo _pendingRelease;   // 已发现的新版本
-        private bool _checking;                // 防止重复点击
 
         private Config _cfg;
         private Detector _detector;
@@ -55,24 +51,6 @@ namespace OneKeyTool
             BuildUi();
             LoadToUi();
             HookDetector();
-            StartAutoUpdateCheck();
-        }
-
-        /// <summary>
-        /// 启动后延迟自动检查一次更新。检查在后台线程进行，失败静默——
-        /// 联网失败不该打扰用户，也不该影响主功能。
-        /// </summary>
-        private void StartAutoUpdateCheck()
-        {
-            System.Windows.Forms.Timer t = new System.Windows.Forms.Timer();
-            t.Interval = 5000;
-            t.Tick += delegate
-            {
-                t.Stop();
-                t.Dispose();
-                CheckForUpdates(false);
-            };
-            t.Start();
         }
 
         /// <summary>
@@ -127,9 +105,7 @@ namespace OneKeyTool
             Controls.Add(_chkEnabled);
 
             // 版本号放右上角，与"启用拦截"同一行。反馈问题时用户可直接报出，
-            // 与 zip 文件名、exe 文件属性一致。
-            // 用 LinkLabel 而非 Label：平时是灰色静态文本，发现新版本时变成可点的链接，
-            // 这样不额外占用布局空间。
+            // 与发布文件名、exe 文件属性一致。
             _lblVersion = new Label();
             _lblVersion.Text = BuildInfo.Version;
             _lblVersion.Size = new Size(120, 20);
@@ -137,17 +113,6 @@ namespace OneKeyTool
             _lblVersion.TextAlign = ContentAlignment.MiddleRight;
             _lblVersion.ForeColor = Color.Gray;
             Controls.Add(_lblVersion);
-
-            _lnkUpdate = new LinkLabel();
-            _lnkUpdate.Text = BuildInfo.Version;
-            _lnkUpdate.Size = new Size(120, 20);
-            _lnkUpdate.Location = new Point(530 - 16 - 120, y);
-            _lnkUpdate.TextAlign = ContentAlignment.MiddleRight;
-            _lnkUpdate.LinkBehavior = LinkBehavior.HoverUnderline;
-            _lnkUpdate.LinkColor = Color.FromArgb(0, 102, 204);
-            _lnkUpdate.Visible = false;
-            _lnkUpdate.Click += OnUpdateLinkClick;
-            Controls.Add(_lnkUpdate);
 
             y += 34;
 
@@ -353,8 +318,8 @@ namespace OneKeyTool
                 LoadToUi();
             });
 
-            ToolStripMenuItem miCheckUpdate = new ToolStripMenuItem("检查更新", null,
-                delegate { CheckForUpdates(true); });
+            ToolStripMenuItem miAbout = new ToolStripMenuItem("关于", null,
+                delegate { ShowAbout(); });
 
             ToolStripMenuItem miQuit = new ToolStripMenuItem("退出", null, delegate { Quit(); });
 
@@ -365,8 +330,8 @@ namespace OneKeyTool
             menu.Items.Add(miAutoStart);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(miReload);
-            menu.Items.Add(miCheckUpdate);
             menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(miAbout);
             menu.Items.Add(miQuit);
 
             // 弹出前同步勾选状态：窗口里改过、或在任务管理器里禁用过自启，
@@ -475,169 +440,26 @@ namespace OneKeyTool
             };
         }
 
-        // ==================== 检查更新 ====================
+        // ==================== 关于 ====================
 
         /// <summary>
-        /// 检查更新。interactive 为 true 表示用户主动触发，此时无论结果如何都给反馈；
-        /// 为 false 表示启动时的自动检查，只有发现新版本才提示。
+        /// 托盘菜单「关于」：显示当前版本，并提供下载页面入口。
+        /// 本程序不联网、不自动更新，升级靠手动下载覆盖。
         /// </summary>
-        private void CheckForUpdates(bool interactive)
+        private void ShowAbout()
         {
-            if (_checking) return;
-            _checking = true;
-            if (interactive) ShowHint("正在检查更新…", Color.Gray);
+            string msg = BuildInfo.DisplayName + "\n\n" +
+                "升级方法：到下面的页面下载新的压缩包，解压后覆盖旧的 exe 即可。\n" +
+                "config.ini 是你的配置，不会被覆盖。\n\n" +
+                "是否现在打开下载页面？";
 
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                ReleaseInfo found = null;
-                string error = null;
-                try
-                {
-                    found = Updater.Check();
-                }
-                catch (Exception ex)
-                {
-                    error = ex.Message;
-                }
-
-                try
-                {
-                    BeginInvoke((MethodInvoker)delegate
-                    {
-                        _checking = false;
-                        OnCheckFinished(found, error, interactive);
-                    });
-                }
-                catch { _checking = false; }
-            });
-        }
-
-        private void OnCheckFinished(ReleaseInfo found, string error, bool interactive)
-        {
-            if (error != null)
-            {
-                if (interactive) ShowHint("检查更新失败：" + error, Color.Firebrick);
-                return;
-            }
-
-            if (found == null)
-            {
-                if (interactive) ShowHint("已是最新版本（" + BuildInfo.Version + "）", Color.SeaGreen);
-                return;
-            }
-
-            _pendingRelease = found;
-
-            // 版本号变成可点的链接
-            _lblVersion.Visible = false;
-            _lnkUpdate.Text = "↑ " + found.Tag;
-            _lnkUpdate.Visible = true;
-
-            string tip = "发现新版本 " + found.Tag + "（当前 " + BuildInfo.Version + "）";
-            if (!found.CanAutoUpdate) tip += "，该版本需手动下载";
-            ShowHint(tip + " —— 点右上角版本号", Color.FromArgb(0, 102, 204));
-
-            if (interactive) _lnkUpdate.Focus();
-        }
-
-        /// <summary>点击右上角版本号：能自动更新就下载替换，否则打开 Release 页。</summary>
-        private void OnUpdateLinkClick(object sender, EventArgs e)
-        {
-            ReleaseInfo info = _pendingRelease;
-            if (info == null) return;
-
-            if (!info.CanAutoUpdate)
-            {
-                OpenReleasePage(info);
-                return;
-            }
-
-            string choice = "发现新版本 " + info.Tag + "\n当前版本 " + BuildInfo.Version +
-                "\n\n将从 GitHub 下载新版本并校验，然后重启程序。是否继续？";
-            if (MessageBox.Show(this, choice, "更新 OneKeyTool",
-                    MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+            if (MessageBox.Show(this, msg, "关于 OneKeyTool",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
                 return;
 
-            _lnkUpdate.Enabled = false;
-            ShowHint("正在下载 " + info.Tag + " …", Color.Gray);
-
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                string newExe = null;
-                string error = null;
-                try
-                {
-                    newExe = Updater.Download(info, delegate(int percent)
-                    {
-                        // 进度回调在后台线程，更新界面要切回 UI 线程
-                        try
-                        {
-                            BeginInvoke((MethodInvoker)delegate
-                            {
-                                ShowHint("正在下载 " + info.Tag + " … " + percent + "%", Color.Gray);
-                            });
-                        }
-                        catch { }
-                    });
-                }
-                catch (Exception ex)
-                {
-                    error = ex.Message;
-                }
-
-                try
-                {
-                    BeginInvoke((MethodInvoker)delegate
-                    {
-                        if (error != null)
-                        {
-                            _lnkUpdate.Enabled = true;
-                            ShowHint("更新失败：" + error, Color.Firebrick);
-                            return;
-                        }
-                        ApplyUpdate(newExe);
-                    });
-                }
-                catch { }
-            });
-        }
-
-        /// <summary>下载并校验完成，执行替换与重启。</summary>
-        private void ApplyUpdate(string newExePath)
-        {
-            if (MessageBox.Show(this,
-                    "下载完成，校验通过。\n\n程序将退出并重启为新版本，是否现在重启？\n" +
-                    "（选择\"取消\"则下次手动启动时生效，本次不重启）",
-                    "更新就绪", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK)
-            {
-                ShowHint("新版本已就位，下次启动生效", Color.SeaGreen);
-                _lnkUpdate.Enabled = true;
-                return;
-            }
-
-            ShowHint("正在应用更新…", Color.Gray);
             try
             {
-                Updater.Apply(newExePath);
-            }
-            catch (Exception ex)
-            {
-                _lnkUpdate.Enabled = true;
-                ShowHint("更新失败：" + ex.Message, Color.Firebrick);
-                MessageBox.Show(this, ex.Message, "更新失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            // 新实例已启动，本实例退出（不弹确认框）
-            Quit();
-        }
-
-        private void OpenReleasePage(ReleaseInfo info)
-        {
-            string url = !string.IsNullOrEmpty(info.HtmlUrl) ? info.HtmlUrl : Updater.ReleasesPage;
-            try
-            {
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(BuildInfo.ReleasesPage) { UseShellExecute = true });
             }
             catch (Exception ex)
             {

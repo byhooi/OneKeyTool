@@ -14,12 +14,6 @@ namespace OneKeyTool
         [STAThread]
         private static void Main(string[] args)
         {
-            // 被更新流程启动的新实例：先清掉上一个版本残留的 .old 文件。
-            // 放在单实例检查之前——若旧实例还没退干净，这次启动会被下面挡掉，
-            // 但 .old 会在下次启动时再清一次，不影响使用。
-            if (args != null && Array.IndexOf(args, Updater.CleanupArgument) >= 0)
-                Updater.CleanupOldFiles();
-
             // 只允许运行一个实例
             bool created;
             _single = new Mutex(true, "OneKeyTool.SingleInstance", out created);

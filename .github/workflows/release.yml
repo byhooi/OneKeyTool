@@ -43,9 +43,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OneKeyTool-${{ steps.ver.outputs.version }}
-          # 只传带版本号的发布 exe。注意别写成 dist/*.exe ——
-          # 那会连未加版本号的中间产物 dist\OneKeyTool.exe 一起传上去。
-          path: dist/*-win-x64.exe
+          path: dist/*-win-x64.zip
           if-no-files-found: error
 
       - name: 发布 Release
@@ -54,20 +52,17 @@ jobs:
         with:
           # 不设 name 时会直接用 tag 名（v1.1.0）当标题，这里加上项目名
           name: OneKeyTool ${{ steps.ver.outputs.version }}
-          files: dist/*-win-x64.exe
+          files: dist/*-win-x64.zip
           generate_release_notes: true
           draft: false
           body: |
             ## 下载
 
-            下载下方的 `OneKeyTool-${{ steps.ver.outputs.version }}-win-x64.exe`，
-            **放到任意文件夹**（建议放文档或桌面，不要放 Program Files），
-            双击即可使用，**无需安装**。
+            下载下方的 `OneKeyTool-${{ steps.ver.outputs.version }}-win-x64.zip`，
+            解压到**任意文件夹**（建议放文档或桌面，不要放 Program Files），
+            双击里面的 `OneKeyTool.exe` 即可使用，**无需安装**。
 
-            首次启动会自动在同目录生成 `config.ini`，之后改配置就改它。
-
-            **已有旧版本？** 不用手动下载：程序启动后会自动检查更新，
-            点设置窗口右上角的版本号即可下载并替换。
+            首次启动会在 exe 同目录自动生成 `config.ini`，之后改配置就改它。
 
             ## 环境要求
 
@@ -80,12 +75,10 @@ jobs:
             按几次键盘上那个自定义键，确认界面上"已触发"计数正常增加后，
             在设置窗口里**取消勾选"观察模式"**并点"保存并应用"，即可正式生效。
 
-            ## 关于自动更新
+            ## 关于升级
 
-            程序会在启动后向 GitHub 查询一次是否有新版本（**只读请求，不上传任何数据**）。
-            发现新版本时，设置窗口右上角的版本号会变成可点的链接，点击即可下载并替换。
-
-            下载的 exe 会用 GitHub 为该文件计算的 SHA256 校验（取自 Release API 的
-            `digest` 字段），哈希不符则拒绝安装。也可以完全不用自动更新，手动下载覆盖即可。
+            本程序**不联网、不自动更新**。升级方式：下载新版 zip，解压后
+            覆盖旧的 `OneKeyTool.exe` 即可（`config.ini` 是你的配置，不会被覆盖）。
+            托盘菜单的「关于」里也能直接打开这个下载页面。
 
             详见仓库的 `README.md`。

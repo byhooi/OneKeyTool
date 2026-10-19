@@ -64,6 +64,7 @@ namespace OneKeyTool.Tests
         private const ushort N = 0x4E;
         private const ushort A = 0x41;
         private const ushort E = 0x45;
+        private const ushort K = 0x4B;
         private const ushort LEFT = 0x25;
         private const ushort ENTER = 0x0D;
         private const ushort LSHIFT = 0xA0;
@@ -497,6 +498,35 @@ namespace OneKeyTool.Tests
             }
         }
 
+        /// <summary>
+        /// 回归：某个按键的 UP 丢失后（钩子被系统短暂摘掉、或被钩子链上其他程序
+        /// 吞掉），_pressed 会残留该键的“按下”状态。不能因此把很久之后正常按下的
+        /// 同一个键当成自动重复——那会跳过特征串匹配，整次宏识别失败。
+        /// 线上日志里的“未出现特征串，判定为普通输入…重放 47 个事件”就是这条路径。
+        /// </summary>
+        private static void TestLostKeyUpDoesNotBreakNextMacro()
+        {
+            foreach (bool dryRun in new bool[] { false, true })
+            {
+                Config cfg;
+                Detector d = NewDetector(dryRun, out cfg);
+
+                // 用户正常按下 'K'，但抬起事件丢了
+                d.FeedForTest(new Step(K, true, 0).ToEvent(), 0);
+
+                // 很久之后按自定义键：那次残留的按下早已过期，不应再算“按住不放”
+                long start = 2000;
+                Recorder macro = RealFirmwareMacro();
+                foreach (Step s in macro.Steps)
+                    d.FeedForTest(s.ToEvent(), start + s.At);
+
+                Assert(d.TriggerCount == 1,
+                    "dryRun=" + dryRun + " 丢失的 K↑ 不应让下一次宏把 K 误判成自动重复（实际触发 " + d.TriggerCount + " 次）");
+                Assert(d.ReplayedForTest == 0,
+                    "dryRun=" + dryRun + " 应正常识别，不应重放（实际 " + d.ReplayedForTest + "）");
+            }
+        }
+
         // ==================== 入口 ====================
 
         public static int Main()
@@ -515,6 +545,7 @@ namespace OneKeyTool.Tests
             Run("手动 Win+R 放行", TestManualRunDialogPasses);
             Run("错误前缀立即放弃", TestWrongPrefixReplays);
             Run("特征串缺失提前放弃", TestMissingSignatureAbortsEarly);
+            Run("丢失抬起事件不破坏后续识别", TestLostKeyUpDoesNotBreakNextMacro);
             Run("普通打字放行", TestOrdinaryTypingPasses);
             Run("观察模式与拦截模式一致", TestDryRunMatchesIntercept);
 

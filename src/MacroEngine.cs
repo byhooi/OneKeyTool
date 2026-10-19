@@ -79,6 +79,19 @@ namespace OneKeyTool
         /// </summary>
         internal const int DanglingUpWaitMs = 500;
 
+        /// <summary>
+        /// 自动重复的判定窗口（毫秒）：同一键的两次 DOWN 间隔在此之内、且中间没有
+        /// 收到 UP，才算按住不放产生的自动重复。
+        ///
+        /// 只看 _pressed 不够：只要某个 UP 丢失（钩子被系统短暂摘掉、被钩子链上
+        /// 其他程序吞掉），_pressed 就会永久残留该键的“按下”状态，之后每一次
+        /// 正常按下都会被误判成重复，从而跳过特征串匹配，整次宏识别失败
+        /// （线上日志表现为“未出现特征串，判定为普通输入”）。
+        /// 真自动重复的间隔由系统重复速率决定（最快约 30ms），远在窗口内；
+        /// 残留状态的距离通常以秒计，会自然失效。
+        /// </summary>
+        internal const int AutoRepeatWindowMs = 500;
+
         private readonly Action<string> _log;
         private Config _cfg;
         private ushort[] _sig;
@@ -87,6 +100,9 @@ namespace OneKeyTool
         private readonly List<KeyEvent> _held = new List<KeyEvent>();
         private readonly List<KeyEvent> _replay = new List<KeyEvent>();
         private readonly HashSet<ushort> _pressed = new HashSet<ushort>();
+
+        /// <summary>各键最近一次 DOWN 的时间，与 _pressed 配对，用于区分真正的自动重复。</summary>
+        private readonly Dictionary<ushort, long> _lastDownAt = new Dictionary<ushort, long>();
 
         /// <summary>
         /// 命中时被丢弃、但尚未见到抬起事件的键。它们的抬起事件要一并吞掉，
@@ -142,10 +158,24 @@ namespace OneKeyTool
         {
             _now = nowMs;
 
-            // 自动重复 = 同一个键在未抬起的情况下再次按下
-            bool repeated = ev.IsDown && _pressed.Contains(ev.Vk);
-            if (ev.IsDown) _pressed.Add(ev.Vk);
-            else _pressed.Remove(ev.Vk);
+            // 自动重复 = 同一个键在未抬起的情况下再次按下，且两次按下间隔足够短。
+            // 时间窗口不可省：UP 丢失会让 _pressed 永久残留，若只看 _pressed，
+            // 很久之后正常按下的同一个键也会被当成重复并跳过特征串匹配。
+            long lastDown;
+            bool repeated = ev.IsDown && _pressed.Contains(ev.Vk)
+                && _lastDownAt.TryGetValue(ev.Vk, out lastDown)
+                && nowMs - lastDown <= AutoRepeatWindowMs;
+
+            if (ev.IsDown)
+            {
+                _pressed.Add(ev.Vk);
+                _lastDownAt[ev.Vk] = nowMs;
+            }
+            else
+            {
+                _pressed.Remove(ev.Vk);
+                _lastDownAt.Remove(ev.Vk);
+            }
 
             _triggeredThisEvent = false;
             _triggerHeldCount = 0;

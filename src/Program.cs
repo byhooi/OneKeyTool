@@ -15,13 +15,25 @@ namespace OneKeyTool
         [STAThread]
         private static void Main(string[] args)
         {
+            // 开机自启时由 Run 项带 --silent 调用：不显示主窗口，只留托盘图标
+            bool silent = false;
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], AutoStart.SilentArg, StringComparison.OrdinalIgnoreCase))
+                    silent = true;
+            }
+
             // 只允许运行一个实例
             bool created;
             _single = new Mutex(true, "OneKeyTool.SingleInstance", out created);
             if (!created)
             {
-                MessageBox.Show("键盘自定义键工具已经在运行了。\n请在系统托盘区找到它。",
-                    "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                // 静默启动途中发现已有实例，不该在登录时弹窗打扰
+                if (!silent)
+                {
+                    MessageBox.Show("键盘自定义键工具已经在运行了。\n请在系统托盘区找到它。",
+                        "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
                 return;
             }
 
@@ -61,7 +73,7 @@ namespace OneKeyTool
                 return;
             }
 
-            Application.Run(new MainForm(cfgPath, cfg, detector));
+            Application.Run(new MainForm(cfgPath, cfg, detector, silent));
         }
 
         /// <summary>

@@ -39,11 +39,15 @@ namespace OneKeyTool
         private Config _cfg;
         private Detector _detector;
 
-        public MainForm(string configPath, Config cfg, Detector detector)
+        /// <summary>启动时带 --silent：第一次显示窗口的请求要拦下来，只留托盘图标。</summary>
+        private bool _startSilentOnce;
+
+        public MainForm(string configPath, Config cfg, Detector detector, bool startSilent)
         {
             _configPath = configPath;
             _cfg = cfg;
             _detector = detector;
+            _startSilentOnce = startSilent;
             Current = this;
             _appIcon = GetAppIcon(32);
             _trayIcon = GetAppIcon(16);
@@ -611,6 +615,22 @@ namespace OneKeyTool
             _trayIcon.Dispose();
             _appIcon.Dispose();
             Application.Exit();
+        }
+
+        /// <summary>
+        /// 静默启动时不显示主窗口。Application.Run(form) 会调用 Show()，
+        /// 这里拦下第一次「请求可见」；之后从托盘「显示设置」调用的 Show() 正常生效。
+        /// </summary>
+        protected override void SetVisibleCore(bool value)
+        {
+            if (_startSilentOnce && value)
+            {
+                _startSilentOnce = false;
+                if (!IsHandleCreated) CreateHandle();   // 托盘菜单等仍需要有效句柄
+                base.SetVisibleCore(false);
+                return;
+            }
+            base.SetVisibleCore(value);
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)

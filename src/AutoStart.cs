@@ -11,6 +11,15 @@ namespace OneKeyTool
         private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string ValueName = "OneKeyTool";
 
+        /// <summary>自启动时传给程序的参数，让主窗口不显示、只留托盘图标。</summary>
+        public const string SilentArg = "--silent";
+
+        /// <summary>注册表里应写入的完整命令行（路径带引号，参数放在引号外）。</summary>
+        private static string BuildCommand()
+        {
+            return "\"" + Application.ExecutablePath + "\" " + SilentArg;
+        }
+
         /// <summary>查询注册表里是否已设置自启（以注册表实际状态为准）。</summary>
         public static bool IsEnabled()
         {
@@ -37,9 +46,7 @@ namespace OneKeyTool
 
                     if (on)
                     {
-                        // 带引号，避免路径含空格时被截断
-                        k.SetValue(ValueName, "\"" + Application.ExecutablePath + "\"",
-                            RegistryValueKind.String);
+                        k.SetValue(ValueName, BuildCommand(), RegistryValueKind.String);
                     }
                     else if (k.GetValue(ValueName) != null)
                     {
@@ -65,7 +72,8 @@ namespace OneKeyTool
                     object v = k.GetValue(ValueName);
                     if (v == null) return;
 
-                    string want = "\"" + Application.ExecutablePath + "\"";
+                    // 旧版写入的条目没有 --silent，这里一并升级为静默启动
+                    string want = BuildCommand();
                     if (!string.Equals(v.ToString().Trim(), want, StringComparison.OrdinalIgnoreCase))
                     {
                         k.SetValue(ValueName, want, RegistryValueKind.String);
